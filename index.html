@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bandurrias</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#a9dd5f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Bandurrias">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="stylesheet" href="vendor/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="map" aria-label="Map"></div>
+
+<div id="lock" hidden><form id="lock-form" autocomplete="on"><div class="ribbon">Bandurrias</div><p id="lock-hint"></p><input type="text" name="username" value="map" autocomplete="username" hidden><input id="lock-pass" type="password" autocomplete="current-password" autocapitalize="none" spellcheck="false" aria-label="Passphrase"><button id="lock-btn" type="submit"></button><p id="lock-msg" role="alert"></p><button id="lock-lang" type="button" class="round"></button></form></div>
+
+<header id="top">
+  <div class="ribbon" id="title">Bandurrias</div>
+  <div class="top-right">
+    <button id="offline" class="chip" type="button" aria-live="polite"><span id="offline-dot"></span><span id="offline-text"></span></button>
+    <button id="lang" class="round" type="button" aria-label="Language">ES</button>
+  </div>
+</header>
+
+<div id="fabs">
+  <button id="btn-quests" class="fab" type="button" data-i18n-title="quests" aria-label="Action items"><span class="ico">❗</span><span id="quest-count" class="badge-count"></span></button>
+  <button id="btn-places" class="fab" type="button" data-i18n-title="places" aria-label="Places"><span class="ico">🔎</span></button>
+  <button id="btn-terrain" class="fab" type="button" data-i18n-title="terrain" aria-label="Terrain"><span class="ico">⛰️</span></button>
+  <button id="btn-layers" class="fab" type="button" data-i18n-title="layers" aria-label="Layers"><span class="ico">🗺️</span></button>
+  <button id="btn-locate" class="fab" type="button" data-i18n-title="locate" aria-label="My location"><span class="ico">📍</span></button>
+</div>
+
+<nav id="modes" aria-label="Map mode">
+  <button type="button" data-mode="bare"><span data-i18n="bare">Bare</span></button>
+  <button type="button" data-mode="existing" class="on"><span data-i18n="existing">Existing</span></button>
+  <button type="button" data-mode="prospective"><span data-i18n="prospective">Prospective</span></button>
+</nav>
+
+<div id="legend" hidden><div id="legend-title"></div><div id="legend-bar"></div><div class="ends"><span id="lg-low"></span><span id="lg-high"></span></div><div id="legend-note"></div></div>
+
+<section id="sheet" hidden>
+  <div class="grab"></div>
+  <button id="sheet-close" class="x" type="button" aria-label="Close">×</button>
+  <div id="sheet-body"></div>
+</section>
+<div id="toast" hidden></div>
+
+<script src="vendor/leaflet.js"></script>
+<script src="vault.js"></script>
+<script src="geo.js"></script>
+<script src="i18n.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
