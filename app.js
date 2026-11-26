@@ -13,7 +13,7 @@
     lang: store.get('lang', (navigator.language || 'en').slice(0, 2) === 'es' ? 'es' : 'en'),
     mode: 'existing',      // always opens in Existing (the language choice is the only remembered preference besides layer toggles)
     tilt: 'tilted',      // property view: 'tilted' (default: always the better tilt), 'auto' (tilt only if it helps >= 15%) or 'north' (north up)
-    layers: Object.assign({ quests: true, labels: true, boundary: true }, store.get('layers3', {})),      // action areas are ON by default (layers3: the old key held the earlier default 'off')
+    layers: Object.assign({ quests: true }, store.get('layers3', {})),      // action areas are ON by default (layers3: the old key held the earlier default 'off')
     trails: { pampa: false, property: true },      // Gaia trail per view (like the terrain): on in the property view, off in the pampa view; the 🥾 button toggles the current view
     terrain: { pampa: false, property: true },      // terrain (lines; + height tint in the pampa view) per view: off in the pampa view, on in the property view; the mountain button toggles the current view's
     view: null
@@ -519,11 +519,11 @@
     applyLayers();
   }
   function applyBoundary() {      // the property outline is a pampa-view toggle; in the property view it is always shown
-    if (state.layers.boundary || (map.getContainer().classList.contains('wide'))) groups.boundary.addTo(map); else map.removeLayer(groups.boundary);
+    groups.boundary.addTo(map);      // the property outline is always shown (no switch)
   }
   function applyLayers() {
     var c = map.getContainer();
-    c.classList.toggle('nolabels', !state.layers.labels);
+    c.classList.add('nolabels');      // name tags are always off (no switch); tapping an icon / pampa still opens its details
     if (state.layers.quests && curView() === 'pampa') groups.quests.addTo(map); else map.removeLayer(groups.quests);      // the action areas belong to the pampa view
     $('btn-quests').classList.toggle('on', state.layers.quests);
     var tOn = state.trails[curView()];
@@ -552,7 +552,6 @@
     $('btn-quests').onclick = function () { if (!state.layers.quests) { state.layers.quests = true; store.set('layers3', state.layers); applyLayers(); } showView({ type: 'quests' }); };      // opens the action-items list AND shows their areas on the map; the switch in the list turns the areas off
     $('btn-trails').onclick = function () { var v = curView(); state.trails[v] = !state.trails[v]; applyLayers(); toast(t('trails') + ': ' + (state.trails[v] ? t('on') : t('off')), 1500); };
     $('btn-places').onclick = function () { showView({ type: 'places' }); };
-    $('btn-layers').onclick = function () { showView({ type: 'layers' }); };
     $('btn-locate').onclick = toggleGPS;
     $('compass').onclick = goClose;      // tap the compass: back to the close-up map
     $('view-close').onclick = goClose;
@@ -605,7 +604,6 @@
     else if (v.type === 'quest') html = viewQuest(v.id);
     else if (v.type === 'quests') html = viewQuests();
     else if (v.type === 'places') html = viewPlaces('');
-    else if (v.type === 'layers') html = viewLayers();
     else if (v.type === 'hole') html = viewHole(v.id);
     el.innerHTML = html; $('sheet').hidden = false; $('sheet').scrollTop = 0; document.body.classList.add('sheet-open');
     highlight(v.type === 'pampa' ? 'pampa' : v.type === 'quest' ? 'quest' : null, v.id);
@@ -652,11 +650,6 @@
     });
     return out;
   }
-  function viewLayers() {
-    var row = function (k, label) { return '<label class="check"><input type="checkbox" data-chk="' + k + '"' + (state.layers[k] ? ' checked' : '') + '>' + t(label) + '</label>'; };
-    var prop = curView() === 'property';      // property view: rivers, lakes and the outline are fixed, contours have their own button, hiking trails will be the only toggle here
-    return '<h2>🗺️ ' + t('layers') + '</h2>' + (prop ? '' : row('boundary', 'show_boundary') + row('labels', 'show_labels')) + '<p class="muted">' + t(prop ? 'layers_note_property' : 'layers_note') + '</p><p class="muted" style="font-size:12px">' + t('credits') + '</p>';
-  }
   function viewHole(n) {
     var h = golf.holes[n - 1];
     var rows = golf.holes.map(function (x) { return '<tr><td><b>' + x.n + '</b></td><td>' + x.tee_name + ' → ' + x.green_name + '</td><td>' + x.m + ' ' + t('m') + '</td><td>' + x.yd + ' ' + t('yd') + '</td></tr>'; }).join('');
@@ -679,7 +672,7 @@
     if (qs.length) { has = true; out += '<h3>' + t('quests') + '</h3>' + questRows(qs); }
     return has ? out : '<p class="muted">' + t('no_results') + '</p>';
   }
-  function viewPlaces() { return '<h2>🔎 ' + t('places') + '</h2><input class="search" type="search" placeholder="' + esc(t('search')) + '" autocomplete="off"><div id="plist">' + placesList('') + '</div>'; }
+  function viewPlaces() { return '<h2>🔎 ' + t('places') + '</h2><input class="search" type="search" placeholder="' + esc(t('search')) + '" autocomplete="off"><div id="plist">' + placesList('') + '</div><p class="muted" style="font-size:12px">' + t('credits') + '</p>'; }
 
   /* ---------- GPS ---------- */
   function toggleGPS() {
