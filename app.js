@@ -1,6 +1,8 @@
 /* Bandurrias farm map: Leaflet (flat CRS) over pre-rendered tile layers + interactive pampas / sites / action items / GPS. */
 (function () {
   'use strict';
+  var P = function (n) { if (window.__perf) window.__perf.mark(n); };      // performance-check hook (see profile.js): does nothing unless the address ends in #profile
+  P('app-start');
   var STR = I18N.STR;
   var EMOJI = { waterfall: '💦', fishing: '🎣', dunny: '🚽', camp: '⛺', vista: '🔭', tower_m: '🐗', tower_n: '🐗', intake_falls: '💦', hangar: '🛩️',
     residence: '🏡', greenhouse: '🌱', orchard: '🍎', tennis: '🎾', solar: '☀️', battery: '🔋', hydro: '⚡', runway: '🛬', pond: '🦆' };
@@ -24,9 +26,10 @@
   var nm = function (o) { return I18N.pick(o, state.lang); };
   var esc = function (s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
   function load() {
+    P('data-request');
     return Promise.all(['meta', 'pampas', 'pois', 'golf', 'quests', 'terrain', 'boundary', 'rivers', 'waters', 'contours_wide', 'relief', 'names', 'canopy', 'trails'].map(function (n) { return Vault.json('data/' + n + '.json'); })).then(function (d) {
       meta = d[0]; pampas = d[1]; pois = d[2]; golf = d[3]; quests = d[4]; terrain = d[5]; boundary = d[6]; rivers = d[7]; waters = d[8]; wideContours = d[9]; reliefInfo = d[10]; placeNames = d[11]; canopyInfo = d[12]; trailData = d[13];
-      init();
+      P('data-loaded'); init(); P('init-done');
     }).catch(loadError);
   }
   /* ---------- lock screen: show/hide passphrase + attempt limit ----------
@@ -66,8 +69,9 @@
         var cur = lockState(); cur.n += 1; if (cur.n >= MAX_TRIES) cur.until = Date.now() + LOCK_MS;
         store.set('lock', cur); $('lock-pass').disabled = false; $('lock-btn').disabled = false; paintLock(); if (!cur.until) $('lock-pass').select();
       };
+      P('unlock-submitted');
       Vault.unlock(v).then(function (ok) {
-        if (ok) { store.set('lock', { n: 0, until: 0 }); el.hidden = true; $('lock-pass').value = ''; $('lock-pass').type = 'password'; load(); } else fail();
+        if (ok) { P('unlocked'); store.set('lock', { n: 0, until: 0 }); el.hidden = true; $('lock-pass').value = ''; $('lock-pass').type = 'password'; load(); } else fail();
       }).catch(fail);
     };
   }
@@ -96,7 +100,7 @@
       tiles[n].options.minZoom = -10;      // draw (scaled down from the z0 tile) at every zoom: the default minZoom 0 made the art vanish in the property view; must be set AFTER construction because detectRetina resets it to >= 0
       tiles[n].on('tileloadstart', function (e) { var s = tiles[n].getTileSize(); e.tile.style.width = (s.x + 1) + 'px'; e.tile.style.height = (s.y + 1) + 'px'; });      // 1px overlap hides sub-pixel seams
       tiles[n].on('add', function () { tiles[n].__ready = false; });          // a (re)added set is not ready until its tiles have loaded
-      tiles[n].on('load', function () { tiles[n].__ready = true; settleTiles(false); });
+      tiles[n].on('load', function () { tiles[n].__ready = true; P('first-art-tiles'); settleTiles(false); });
     });
     map.createPane('tint'); map.getPane('tint').style.zIndex = 250; map.getPane('tint').style.pointerEvents = 'none';      // blended with the tiles in CSS (mix-blend-mode: color) so map detail shows through
     tintRenderer = L.svg({ pane: 'tint' });
@@ -358,6 +362,7 @@
       var smooth = function (k) { k = Math.max(0, Math.min(1, k)); return k * k * (3 - 2 * k); };
       var Layer = L.GridLayer.extend({
         createTile: function (co) {
+          P('canopy-first-tile');
           var dpr = Math.min(2, window.devicePixelRatio || 1), T = 256, cv = document.createElement('canvas'); cv.width = cv.height = T * dpr; cv.style.width = cv.style.height = T + 'px';
           var mt = 256 * Math.pow(2, meta.zmax - co.z) / meta.px_per_m, X0 = meta.x0 + co.x * mt, Y0 = meta.y1 - co.y * mt;      // metres of the tile's top-left corner, and metres per tile
           if (X0 > b[2] || X0 + mt < b[0] || Y0 < b[1] || Y0 - mt > b[3]) return cv;      // wholly outside the field
@@ -385,6 +390,7 @@
           return cv;
         }
       });
+      P('canopy-ready');
       canopyLayer = new Layer({ pane: 'canopy', tileSize: 256, minZoom: -10, maxZoom: 12, noWrap: true, keepBuffer: 2, className: 'canopy-tiles' }).addTo(map);
     }).catch(function () { /* no forest layer (e.g. offline before it was cached): the map still works */ });
   }
@@ -406,7 +412,7 @@
   function buildRelief() {      // one image over the whole coverage zone (decrypted in the browser when the build is encrypted)
     var b = reliefInfo.bounds, url = 'data/relief.webp' + (Vault.enc ? '.enc' : '');
     (Vault.enc ? Vault.blobURL(url) : Promise.resolve(url)).then(function (u) {
-      reliefLayer = L.imageOverlay(u, [G.m2ll(b[0], b[1]), G.m2ll(b[2], b[3])], { pane: 'relief', interactive: false, className: 'relief-img', opacity: map.getContainer().classList.contains('wide') ? 1 : 0.6 }).addTo(map);
+      reliefLayer = L.imageOverlay(u, [G.m2ll(b[0], b[1]), G.m2ll(b[2], b[3])], { pane: 'relief', interactive: false, className: 'relief-img', opacity: map.getContainer().classList.contains('wide') ? 1 : 0.6 }).on('load', function () { P('relief-drawn'); }).addTo(map);
     }).catch(function () { /* no relief (e.g. offline before it was cached): the map still works */ });
   }
 
@@ -455,7 +461,7 @@
     requestAnimationFrame(step);
   }
   function beginTransition() { transitioning = true; clearTimeout(transTimer); transTimer = setTimeout(function () { transitioning = false; updateView(); }, 4000); }
-  function endTransition() { transitioning = false; clearTimeout(transTimer); updateView(); updateMinZoom(); }
+  function endTransition() { P('view-transition-end'); transitioning = false; clearTimeout(transTimer); updateView(); updateMinZoom(); }
   function enterProperty() {
     var sz = map.getSize(), th = chooseBearing(state.tilt, sz.x, sz.y), fit = fitFor(th, sz.x, sz.y);
     beginTransition(); updateMinZoom(th);
@@ -701,6 +707,7 @@
   function updateOfflineText() {
     var o = $('offline'); if (!o) return;
     o.className = 'chip ' + ({ ready: 'ready', saving: 'saving', partial: 'partial' }[off.state] || '');
+    if (off.state === 'ready') P('offline-ready');
     $('offline-text').textContent = off.state === 'ready' ? t('offline_ready') : off.state === 'saving' ? t('offline_saving') + ' ' + (off.total ? Math.round(100 * off.done / off.total) + '%' : '') : off.state === 'partial' ? t('offline_partial') : t('offline_none');
   }
   function askSW(msg) { if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage(msg); else if (navigator.serviceWorker) navigator.serviceWorker.ready.then(function (r) { r.active && r.active.postMessage(msg); }); }

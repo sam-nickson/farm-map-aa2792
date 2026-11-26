@@ -1,6 +1,6 @@
 /* Bandurrias service worker: app shell + data stale-while-revalidate, tiles cache-first, full offline download on request. */
 const SHELL = 'bandurrias-shell';
-const CORE = ['./', 'index.html', 'style.css', 'app.js', 'geo.js', 'i18n.js', 'vault.js', 'build.json', 'manifest.webmanifest', 'vendor/leaflet.js', 'vendor/leaflet-rotate.js', 'vendor/leaflet.css',
+const CORE = ['./', 'index.html', 'style.css', 'app.js', 'profile.js', 'geo.js', 'i18n.js', 'vault.js', 'build.json', 'manifest.webmanifest', 'vendor/leaflet.js', 'vendor/leaflet-rotate.js', 'vendor/leaflet.css',
   'icons/icon-192.png', 'icons/icon-180.png', 'icons/icon-512.png', 'icons/icon-512-maskable.png'];
 const DATA = ['meta', 'pampas', 'pois', 'golf', 'quests', 'terrain', 'boundary', 'rivers', 'waters', 'contours_wide', 'relief', 'names', 'canopy', 'trails'];      // data/<name>.json, or .json.enc when build.json says enc:true
 const ext = (b) => (b.enc ? '.enc' : '');
