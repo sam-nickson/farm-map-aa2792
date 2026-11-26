@@ -12,19 +12,19 @@
   var state = {
     lang: store.get('lang', (navigator.language || 'en').slice(0, 2) === 'es' ? 'es' : 'en'),
     mode: 'existing',      // always opens in Existing (the language choice is the only remembered preference besides layer toggles)
-    tilt: 'auto',      // property view: 'auto' (best fit), 'north' (north up) or 'tilted'
-    layers: Object.assign({ quests: false, labels: true, boundary: true }, store.get('layers2', {})),
+    tilt: 'tilted',      // property view: 'tilted' (default: always the better tilt), 'auto' (tilt only if it helps >= 15%) or 'north' (north up)
+    layers: Object.assign({ quests: true, labels: true, boundary: true }, store.get('layers3', {})),      // action areas are ON by default (layers3: the old key held the earlier default 'off')
     terrain: { pampa: false, property: true },      // terrain (lines; + height tint in the pampa view) per view: off in the pampa view, on in the property view; the mountain button toggles the current view's
     view: null
   };
-  var clamping = false, placeNames, reliefInfo, reliefLayer, underRenderer, meta, pampas, pois, golf, quests, terrain, boundary, rivers, waters, wideContours, frameLabel, bbounds, closeFitZoom, zoneBounds, transitioning = false, transTimer, lastPortrait, G, map, tiles = {}, groups = {}, badgeMarkers = {}, tintRenderer, pampaPolys = {}, questPolys = {}, sitePills = [], gps = null;
+  var clamping = false, canopyInfo, canopyLayer, placeNames, reliefInfo, reliefLayer, underRenderer, meta, pampas, pois, golf, quests, terrain, boundary, rivers, waters, wideContours, frameLabel, bbounds, closeFitZoom, zoneBounds, transitioning = false, transTimer, lastPortrait, G, map, tiles = {}, groups = {}, badgeMarkers = {}, tintRenderer, pampaPolys = {}, questPolys = {}, sitePills = [], gps = null;
 
   var t = function (k) { return STR[state.lang][k] || STR.en[k] || k; };
   var nm = function (o) { return I18N.pick(o, state.lang); };
   var esc = function (s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
   function load() {
-    return Promise.all(['meta', 'pampas', 'pois', 'golf', 'quests', 'terrain', 'boundary', 'rivers', 'waters', 'contours_wide', 'relief', 'names'].map(function (n) { return Vault.json('data/' + n + '.json'); })).then(function (d) {
-      meta = d[0]; pampas = d[1]; pois = d[2]; golf = d[3]; quests = d[4]; terrain = d[5]; boundary = d[6]; rivers = d[7]; waters = d[8]; wideContours = d[9]; reliefInfo = d[10]; placeNames = d[11];
+    return Promise.all(['meta', 'pampas', 'pois', 'golf', 'quests', 'terrain', 'boundary', 'rivers', 'waters', 'contours_wide', 'relief', 'names', 'canopy'].map(function (n) { return Vault.json('data/' + n + '.json'); })).then(function (d) {
+      meta = d[0]; pampas = d[1]; pois = d[2]; golf = d[3]; quests = d[4]; terrain = d[5]; boundary = d[6]; rivers = d[7]; waters = d[8]; wideContours = d[9]; reliefInfo = d[10]; placeNames = d[11]; canopyInfo = d[12];
       init();
     }).catch(loadError);
   }
@@ -101,9 +101,10 @@
     tintRenderer = L.svg({ pane: 'tint' });
     map.createPane('under', map._rotatePane); map.getPane('under').style.zIndex = 150; map.getPane('under').style.pointerEvents = 'none';      // below the art (tile pane 200): rivers / lakes / contours outside the frame show through the art's soft edge and never draw over it
     underRenderer = L.svg({ pane: 'under' });
-    map.createPane('relief', map._rotatePane); map.getPane('relief').style.zIndex = 120; map.getPane('relief').style.pointerEvents = 'none';      // soft hillshade of the whole zone, below everything else (the art, rivers, contours)
-    buildRelief();
-    ['boundary', 'zone', 'frame', 'waters', 'watersIn', 'wideContours', 'wideContoursIn', 'wideLabels', 'names', 'tint', 'contourMajor', 'contourMinor', 'contourLabels', 'pampas', 'golf', 'sites', 'badges', 'quests', 'gps'].forEach(function (n) { groups[n] = L.layerGroup().addTo(map); });
+    map.createPane('relief', map._rotatePane); map.getPane('relief').style.zIndex = 140; map.getPane('relief').style.pointerEvents = 'none';      // soft hillshade of the whole zone, below everything else (the art, rivers, contours)
+    map.createPane('canopy', map._rotatePane); map.getPane('canopy').style.zIndex = 130; map.getPane('canopy').style.pointerEvents = 'none';      // forest cover for the rest of the property: below the relief shading (140), the rivers / contours (150) and the art (200)
+    buildRelief(); buildCanopy();
+    ['boundary', 'zone', 'frame', 'waters', 'watersIn', 'wideContours', 'wideContoursIn', 'wideContoursMid', 'wideLabelsMid', 'wideLabels', 'names', 'tint', 'contourMajor', 'contourMinor', 'contourLabels', 'pampas', 'golf', 'sites', 'badges', 'quests', 'gps'].forEach(function (n) { groups[n] = L.layerGroup().addTo(map); });
     buildBoundary(); buildWaters(); buildNames(); buildTerrain(); buildPampas(); buildGolf(); buildSites(); buildQuests();
     var farZoom = fit + 0.9;
     var minorZoom = fit + 0.6;      // 10 m contour lines appear from a normal working zoom (only if the terrain-lines layer is on)
@@ -118,7 +119,7 @@
     applyLang(); applyMode(); applyLayers();
     openFromHash();
     registerSW();
-    window.__app = { names: function () { return placeNames; }, reliefInfo: function () { return reliefInfo; }, under: function () { return underRenderer; }, contoursWide: function () { return wideContours; }, waters: function () { return waters; }, chooseBearing: chooseBearing, fitFor: fitFor, tiltAngles: tiltAngles, isTransitioning: function () { return transitioning; }, sites: function () { return pois; }, golf: function () { return golf; }, boundary: boundary, bbounds: bbounds, terrain: terrain, map: map, G: G, state: state, meta: meta };       // for tests / debugging
+    window.__app = { canopy: function () { return canopyLayer; }, canopyInfo: function () { return canopyInfo; }, terrainData: function () { return terrain; }, names: function () { return placeNames; }, reliefInfo: function () { return reliefInfo; }, under: function () { return underRenderer; }, contoursWide: function () { return wideContours; }, waters: function () { return waters; }, chooseBearing: chooseBearing, fitFor: fitFor, tiltAngles: tiltAngles, isTransitioning: function () { return transitioning; }, sites: function () { return pois; }, golf: function () { return golf; }, boundary: boundary, bbounds: bbounds, terrain: terrain, map: map, G: G, state: state, meta: meta };       // for tests / debugging
   }
 
   function VaultTileLayer() {
@@ -203,24 +204,62 @@
   /* ---------- property view: rivers + lakes (reconciled set) and 50 m / 100 m contours across the coverage zone ---------- */
   var RIVER_PX = { major: 8, river: 4.2 }, RIVER_M = { major: 14, river: 6 }, waterLayers = [];      // Rio Blanco clearly bigger; every other river the same width. px minimums at the property zoom, real metres when zoomed in (so they meet the art's rivers)
   function waterWeights(cls) { var ppm = pxPerMetre(), core = Math.max(RIVER_PX[cls], RIVER_M[cls] * ppm); return { core: core, bank: core + Math.max(3, 7 * ppm), hl: Math.max(1.1, core * 0.13) }; }
-  function restyleWaters() { if (!map) return; waterLayers.forEach(function (o) { o.l.setStyle({ weight: waterWeights(o.cls)[o.part] }); }); }
+  function trimPts(pts, t0, t1) {      // pts [[x,y]...] in metres, cut t0 from the start and t1 from the end (never more than 40% of the length in all)
+    var len = 0, i; for (i = 1; i < pts.length; i++) len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    var k = Math.min(1, 0.4 * len / Math.max(1e-6, t0 + t1)); t0 *= k; t1 *= k;
+    function cut(arr, d) {      // drop d metres from the start of arr
+      arr = arr.slice();
+      while (arr.length > 2 && d > 0) { var seg = Math.hypot(arr[1][0] - arr[0][0], arr[1][1] - arr[0][1]); if (seg > d) break; d -= seg; arr.shift(); }
+      var sg = Math.hypot(arr[1][0] - arr[0][0], arr[1][1] - arr[0][1]); if (d > 0 && sg > d) arr[0] = [arr[0][0] + (arr[1][0] - arr[0][0]) * d / sg, arr[0][1] + (arr[1][1] - arr[0][1]) * d / sg];
+      return arr;
+    }
+    return cut(cut(pts, t0).reverse(), t1).reverse();
+  }
+  function restyleWaters() {
+    if (!map) return;
+    var ppm = pxPerMetre();
+    waterLayers.forEach(function (o) {
+      var w = waterWeights(o.cls);
+      if (o.dot) { o.l.setRadius(w[o.part] / 2); return; }
+      o.l.setStyle({ weight: w[o.part] });
+      if (o.part === 'bank' && (o.r.j[0] || o.r.j[1])) {      // at a junction the tan border stops where the other river's blue begins (half a river width from its centre line)
+        var tm = (w.core / 2 + 1) / ppm;
+        o.l.setLatLngs(trimPts(o.r.pts, o.r.j[0] ? tm : 0, o.r.j[1] ? tm : 0).map(function (c) { return G.m2ll(c[0], c[1]); }));
+      }
+    });
+  }
   function buildWaters() {
     var ll = function (pts) { return pts.map(function (c) { return G.m2ll(c[0], c[1]); }); };
     waters.tarns.forEach(function (t2) { L.polygon(ll(t2.pts), { fillColor: '#8fd3f4', fillOpacity: 1, color: '#ecd596', weight: 2.5, className: 'tarn', interactive: false, renderer: underRenderer }).addTo(groups.waters); });
     ['bank', 'core', 'hl'].forEach(function (part) {      // all banks first, then all cores, then the pale centre dashes (as in the art's rivers), so rivers join cleanly where they meet
       waters.rivers.forEach(function (r) {
-        var l = L.polyline(ll(r.pts), { color: part === 'bank' ? '#ecd596' : part === 'core' ? '#3fc1e6' : '#e4f6fc', weight: waterWeights(r.cls)[part], opacity: part === 'hl' ? 0.85 : 1, lineCap: part === 'hl' ? 'butt' : 'round', lineJoin: 'round', dashArray: part === 'hl' ? '10 14' : null, className: 'river-' + part + (r.cls === 'major' ? ' river-major' : ''), interactive: false, renderer: r.f ? undefined : underRenderer })
-          .addTo(r.f ? groups.watersIn : groups.waters);      // f=0: outside the close-up frame (both views); f=1: inside it (user-drawn rivers the art does not have; both views)
-        waterLayers.push({ l: l, cls: r.cls, part: part });
+        var joined = r.j && (r.j[0] || r.j[1]), grp = r.f ? groups.watersIn : groups.waters, rend = r.f ? undefined : underRenderer, col = part === 'bank' ? '#ecd596' : part === 'core' ? '#3fc1e6' : '#e4f6fc';
+        var l = L.polyline(ll(r.pts), { color: col, weight: waterWeights(r.cls)[part], opacity: part === 'hl' ? 0.85 : 1, lineCap: part === 'hl' || joined ? 'butt' : 'round', lineJoin: 'round', dashArray: part === 'hl' ? '10 14' : null, className: 'river-' + part + (r.cls === 'major' ? ' river-major' : ''), interactive: false, renderer: rend }).addTo(grp);      // f=0: outside the close-up frame (both views); f=1: inside it (user-drawn rivers the art does not have; both views)
+        waterLayers.push({ l: l, cls: r.cls, part: part, r: r });
+        if (joined && part !== 'hl') [0, 1].forEach(function (k) {      // flat ends where it joins another river; round caps only on the free ends
+          if (r.j[k]) return;
+          var c = r.pts[k ? r.pts.length - 1 : 0], d = L.circleMarker(G.m2ll(c[0], c[1]), { radius: waterWeights(r.cls)[part] / 2, stroke: false, fill: true, fillColor: col, fillOpacity: 1, interactive: false, renderer: rend, className: 'river-' + part + '-dot' }).addTo(grp);
+          waterLayers.push({ l: d, cls: r.cls, part: part, dot: true });
+        });
       });
     });
+    restyleWaters();
     wideContours.levels.forEach(function (lv) {
       var major = lv.z % wideContours.major === 0;
       var style = { color: '#8a6a3a', weight: major ? 1.3 : 0.7, opacity: major ? 0.75 : 0.4, interactive: false }, ll = function (ln) { return ln.map(function (c) { return G.m2ll(c[0], c[1]); }); };
       lv.lines.forEach(function (ln) { L.polyline(ll(ln), L.extend({ renderer: underRenderer, className: 'wide-contour' + (major ? ' wide-major' : '') }, style)).addTo(groups.wideContours); });      // outside the close-up frame: under the art
+      (lv.lines_mid || []).forEach(function (ln) { L.polyline(ll(ln), L.extend({ renderer: underRenderer, className: 'wide-contour wide-contour-mid' + (major ? ' wide-major' : '') }, style)).addTo(groups.wideContoursMid); });      // around the close-up frame: only where the pampa view has no fine contours of its own (property view)
+      (lv.labels_mid || []).forEach(function (p) { L.marker(G.m2ll(p[0], p[1]), { icon: L.divIcon({ className: 'wide-contour-label', html: '<span>' + lv.z + ' m</span>', iconSize: [0, 0] }), interactive: false, keyboard: false }).addTo(groups.wideLabelsMid); });
       (lv.lines_in || []).forEach(function (ln) { L.polyline(ll(ln), L.extend({ className: 'wide-contour wide-contour-in' + (major ? ' wide-major' : '') }, style)).addTo(groups.wideContoursIn); });      // inside it: over the art, property view only (same surface as the close-up contours, so they continue each other)
       (lv.labels || []).forEach(function (p) { L.marker(G.m2ll(p[0], p[1]), { icon: L.divIcon({ className: 'wide-contour-label', html: '<span>' + lv.z + ' m</span>', iconSize: [0, 0] }), interactive: false, keyboard: false }).addTo(groups.wideLabels); });
     });
+  }
+  function roundedFrame() {      // the close-up art's outline: the frame with rounded corners (meta.round metres), as lat/lngs
+    var r = meta.round || 0, x0 = meta.x0, x1 = meta.x1, y0 = meta.y0, y1 = meta.y1, pts = [], k, a;
+    [[x1 - r, y1 - r, 0], [x0 + r, y1 - r, 90], [x0 + r, y0 + r, 180], [x1 - r, y0 + r, 270]].forEach(function (c) {
+      for (k = 0; k <= 12; k++) { a = (c[2] + k * 90 / 12) * Math.PI / 180; pts.push(G.m2ll(c[0] + r * Math.cos(a), c[1] + r * Math.sin(a))); }
+    });
+    return pts;
   }
   function buildBoundary() {
     var ll = boundary.ring.map(function (c) { return G.m2ll(c[0], c[1]); });
@@ -229,7 +268,7 @@
     // the edge of the mapped coverage zone: a firm thin line in both views (scrolling past it is not possible, see clampToZone)
     L.rectangle(zoneBounds, { fill: false, color: '#2f6f9f', weight: 2, opacity: 0.9, className: 'zone-line', interactive: false }).addTo(groups.zone);
     // at whole-property zoom the detailed map is a small patch: mark it with a tappable box that jumps to the close-up
-    var fb = G.bounds(), box = L.rectangle(fb, { color: '#fff6d9', weight: 2, dashArray: '6 6', fill: true, fillColor: '#000', fillOpacity: 0, className: 'frame-box' }).addTo(groups.frame);      // no fill (the art shows undimmed); fill-opacity 0 still counts as painted, so the whole box stays tappable
+    var fb = G.bounds(), box = L.polygon(roundedFrame(), { color: '#fff6d9', weight: 2, dashArray: '6 6', fill: true, fillColor: '#000', fillOpacity: 0, className: 'frame-box' }).addTo(groups.frame);      // no fill (the art shows undimmed); fill-opacity 0 still counts as painted, so the whole box stays tappable
     box.on('click', function (e) { L.DomEvent.stopPropagation(e); goClose(); });
     frameLabel = L.marker(L.latLngBounds(fb).getCenter(), { icon: L.divIcon({ className: 'frame-label', html: '<span></span>', iconSize: [0, 0] }), interactive: false, keyboard: false }).addTo(groups.frame);
   }
@@ -258,12 +297,9 @@
     var v = curView(), on = state.terrain[v], pampaOn = on && v === 'pampa';
     ['tint', 'contourMajor', 'contourLabels'].forEach(function (n) { if (pampaOn) groups[n].addTo(map); else map.removeLayer(groups[n]); });      // pampa view: close-up contours + height tint + legend
     ['wideContours', 'wideLabels'].forEach(function (n) { if (on) groups[n].addTo(map); else map.removeLayer(groups[n]); });
-    if (on && v === 'property') groups.wideContoursIn.addTo(map); else map.removeLayer(groups.wideContoursIn);      // across the pampa area too in the property view; the pampa view shows the close-up contours there                        // 50 / 100 m contours across the zone (outside the close-up frame) in either view when terrain is on
+    ['wideContoursIn', 'wideContoursMid', 'wideLabelsMid'].forEach(function (n) { if (on && v === 'property') groups[n].addTo(map); else map.removeLayer(groups[n]); });      // across the pampa area too in the property view; the pampa view shows the close-up contours there                        // 50 / 100 m contours across the zone (outside the close-up frame) in either view when terrain is on
     applyMinorContours(minorWanted);
-    $('legend').hidden = !pampaOn;
     $('btn-terrain').classList.toggle('on', on);
-    $('lg-low').textContent = terrain.range[0] + ' m'; $('lg-high').textContent = terrain.range[1] + ' m';
-    $('legend-bar').style.background = 'linear-gradient(to right,' + rampCSS(0) + ',' + rampCSS(0.5) + ',' + rampCSS(1) + ')';
     groups.waters.addTo(map);      // rivers and lakes outside the close-up frame: always, in both views, no toggle
     groups.watersIn.addTo(map);      // the user-drawn rivers' parts inside the frame (the art does not draw them) in both views, so they connect with the outside rivers
   }
@@ -314,6 +350,55 @@
     });
   }
 
+  /* ---------- forest cover across the property (canvas layer: tree texture masked by a low-res field; see build_canopy.py) ---------- */
+  function buildCanopy() {
+    var ci = canopyInfo, base = 'data/canopy_', ext = '.webp' + (Vault.enc ? '.enc' : '');
+    var img = function (n) {      // decoded in the browser when the build is encrypted
+      return (Vault.enc ? Vault.blobURL(base + n + ext) : Promise.resolve(base + n + ext)).then(function (u) { return new Promise(function (res, rej) { var i = new Image(); i.onload = function () { res(i); }; i.onerror = rej; i.src = u; }); });
+    };
+    Promise.all([img('field'), img('tex_a'), img('tex_b')]).then(function (im) {
+      var fw = im[0].naturalWidth, fh = im[0].naturalHeight, c = document.createElement('canvas'); c.width = fw; c.height = fh;
+      var cx = c.getContext('2d'); cx.drawImage(im[0], 0, 0); var src = cx.getImageData(0, 0, fw, fh).data;
+      var mask = function (fn) { var m = document.createElement('canvas'); m.width = fw; m.height = fh; var mc = m.getContext('2d'), id = mc.createImageData(fw, fh), d = id.data; for (var k = 0, n = fw * fh; k < n; k++) d[k * 4 + 3] = fn(src[k * 4], src[k * 4 + 1], src[k * 4 + 2], k); mc.putImageData(id, 0, 0); return m; };
+      var bl = ci.blend, fr = ci.frame, nearW = new Float32Array(fw * fh);      // closeness to the close-up frame: 1 at its edge (and inside), 0 beyond bl.dist metres
+      for (var yy = 0; yy < fh; yy++) { var Ym = ci.bounds[3] - (yy + 0.5) * ci.step, dy = Math.max(fr[1] - Ym, Ym - fr[3], 0); for (var xx = 0; xx < fw; xx++) { var Xm = ci.bounds[0] + (xx + 0.5) * ci.step, dx = Math.max(fr[0] - Xm, Xm - fr[2], 0), q = 1 - Math.hypot(dx, dy) / bl.dist; q = q < 0 ? 0 : q > 1 ? 1 : q; nearW[yy * fw + xx] = q * q * (3 - 2 * q); } }
+      var masks = { near: mask(function (r, g, b, k) { return 255 * nearW[k]; }),
+        wash: mask(function (r, g, b, k) { var w = nearW[k], f = Math.min(1, r / 120); return Math.min(255, r + (242 - r) * bl.boost * w * f * f * (3 - 2 * f)); }), mix: mask(function (r, g, b) { return b; }), reno: mask(function (r, g) { return g; }), keep: mask(function (r, g) { return 255 - 0.35 * g; }) };      // alpha-only canvases made once
+      var tex = [im[1], im[2]], per = ci.periods, b = ci.bounds, st = ci.step, WASH = 'rgb(' + ci.wash.join(',') + ')', LIME = 'rgb(' + ci.lime.join(',') + ')';
+      var smooth = function (k) { k = Math.max(0, Math.min(1, k)); return k * k * (3 - 2 * k); };
+      var Layer = L.GridLayer.extend({
+        createTile: function (co) {
+          var dpr = Math.min(2, window.devicePixelRatio || 1), T = 256, cv = document.createElement('canvas'); cv.width = cv.height = T * dpr; cv.style.width = cv.style.height = T + 'px';
+          var mt = 256 * Math.pow(2, meta.zmax - co.z) / meta.px_per_m, X0 = meta.x0 + co.x * mt, Y0 = meta.y1 - co.y * mt;      // metres of the tile's top-left corner, and metres per tile
+          if (X0 > b[2] || X0 + mt < b[0] || Y0 < b[1] || Y0 - mt > b[3]) return cv;      // wholly outside the field
+          var ppm = cv.width / mt, tw = smooth((ppm / dpr - 0.12) / 0.45), ctx = cv.getContext('2d');      // texture weight: plain wash far out, full texture from ~0.6 px/m (it would shimmer)
+          var layer = function (fn) { var c2 = document.createElement('canvas'); c2.width = c2.height = cv.width; fn(c2.getContext('2d')); return c2; };
+          var fieldRect = function (g, m) { g.imageSmoothingEnabled = true; g.drawImage(m, (X0 - b[0]) / st, (b[3] - Y0) / st, mt / st, mt / st, 0, 0, cv.width, cv.height); };
+          var tiled = function (g, t, L) {      // the texture, period L metres, covering the tile
+            var lp = L * ppm, ox = -((X0 % L + L) % L) * ppm, oy = -((L - ((Y0 % L) + L) % L) % L) * ppm; g.imageSmoothingEnabled = true;
+            for (var x = ox; x < cv.width; x += lp) for (var y = oy; y < cv.height; y += lp) g.drawImage(t, x, y, lp, lp);
+          };
+          ctx.fillStyle = WASH; ctx.fillRect(0, 0, cv.width, cv.height);
+          if (tw > 0.01) {
+            var a = layer(function (g) { tiled(g, tex[0], per[0]); });
+            var bb = layer(function (g) { tiled(g, tex[1], per[1]); g.globalCompositeOperation = 'destination-in'; fieldRect(g, masks.mix); });      // texture B only where the mix field says
+            a.getContext('2d').drawImage(bb, 0, 0);
+            ctx.globalAlpha = tw; ctx.drawImage(a, 0, 0); ctx.globalAlpha = 1;
+          }
+          var tone = layer(function (g) { g.fillStyle = 'rgb(' + bl.tone.join(',') + ')'; g.fillRect(0, 0, cv.width, cv.height); g.globalCompositeOperation = 'destination-in'; fieldRect(g, masks.near); });      // next to the frame: the frame's own forest tone, fading out
+          ctx.globalCompositeOperation = 'color'; ctx.globalAlpha = bl.hue; ctx.drawImage(tone, 0, 0);      // hue + saturation of the frame's forest, keeping the texture's own light and dark
+          ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = bl.k; ctx.drawImage(tone, 0, 0); ctx.globalAlpha = 1;      // and a little of its brightness
+          var reno = layer(function (g) { g.fillStyle = LIME; g.fillRect(0, 0, cv.width, cv.height); g.globalCompositeOperation = 'destination-in'; fieldRect(g, masks.reno); });      // renoval: lighter, sparser green
+          ctx.globalAlpha = 0.72; ctx.drawImage(reno, 0, 0); ctx.globalAlpha = 1;
+          ctx.globalCompositeOperation = 'destination-in'; ctx.globalAlpha = (1 - tw) / 1.35 + tw; fieldRect(ctx, masks.wash); ctx.globalAlpha = 1;      // overall strength: the forest field
+          fieldRect(ctx, masks.keep);                                                                                                                  // renoval is also a little more transparent
+          return cv;
+        }
+      });
+      canopyLayer = new Layer({ pane: 'canopy', tileSize: 256, minZoom: -10, maxZoom: 12, noWrap: true, keepBuffer: 2, className: 'canopy-tiles' }).addTo(map);
+    }).catch(function () { /* no forest layer (e.g. offline before it was cached): the map still works */ });
+  }
+
   function buildRelief() {      // one image over the whole coverage zone (decrypted in the browser when the build is encrypted)
     var b = reliefInfo.bounds, url = 'data/relief.webp' + (Vault.enc ? '.enc' : '');
     (Vault.enc ? Vault.blobURL(url) : Promise.resolve(url)).then(function (u) {
@@ -334,7 +419,7 @@
     var wide = map.getZoom() < closeFitZoom - 0.45;
     $('view-close').classList.toggle('on', !wide); $('view-property').classList.toggle('on', wide);
     map.getContainer().classList.toggle('wide', wide); document.body.classList.toggle('propview', wide); $('minimap').hidden = wide;      // whole-property view: hide badges/pills/bubbles and the mode bar; the map itself is the overview
-    $('tilt-btn').hidden = !wide; applyBoundary(); applyTerrain();
+    $('tilt-btn').hidden = !wide; applyLayers();
     if (wide) groups.names.addTo(map); else map.removeLayer(groups.names);      // names: property view only
     if (reliefLayer) reliefLayer.setOpacity(wide ? 1 : 0.6);      // full strength in the property view, quieter around the close-up
     if (wide) { groups.frame.addTo(map); placeFrameLabel(); } else map.removeLayer(groups.frame);
@@ -445,7 +530,7 @@
   function applyLayers() {
     var c = map.getContainer();
     c.classList.toggle('nolabels', !state.layers.labels);
-    if (state.layers.quests) groups.quests.addTo(map); else map.removeLayer(groups.quests);
+    if (state.layers.quests && curView() === 'pampa') groups.quests.addTo(map); else map.removeLayer(groups.quests);      // the action areas belong to the pampa view
     $('btn-quests').classList.toggle('on', state.layers.quests);
     applyBoundary();
     applyTerrain();
@@ -458,7 +543,6 @@
     $('title').textContent = t('title');
     sitePills.forEach(function (s) { s.pill.setIcon(pillIcon(s.poi, s.kind)); });
     updateOfflineText();
-    $('legend-title').textContent = t('terrain_legend'); $('legend-note').textContent = t('terrain_note');
     paintTilt(); $('compass').title = t('compass'); $('view-close').textContent = t('view_close'); $('view-property').textContent = t('view_property'); updateScale(); updateView();
     renderView();
   }
@@ -468,7 +552,7 @@
     document.querySelectorAll('#modes button').forEach(function (b) {
       b.onclick = function () { state.mode = b.dataset.mode; applyMode(); toast(t(state.mode) + ': ' + t(state.mode + '_sub'), 1800); };
     });
-    $('btn-quests').onclick = function () { state.layers.quests = !state.layers.quests; store.set('layers2', state.layers); applyLayers(); toast(t('quests') + ': ' + (state.layers.quests ? t('on') : t('off')), 1500); };
+    $('btn-quests').onclick = function () { if (!state.layers.quests) { state.layers.quests = true; store.set('layers3', state.layers); applyLayers(); } showView({ type: 'quests' }); };      // opens the action-items list AND shows their areas on the map; the switch in the list turns the areas off
     $('btn-places').onclick = function () { showView({ type: 'places' }); };
     $('btn-layers').onclick = function () { showView({ type: 'layers' }); };
     $('btn-locate').onclick = toggleGPS;
@@ -494,7 +578,7 @@
   function flyToBounds(bnds, maxZ) { map.flyToBounds(bnds, { padding: [40, 40], maxZoom: maxZ || meta.zmax + 1, duration: 0.6, paddingBottomRight: [40, Math.round(window.innerHeight * 0.45)] }); }
 
   function showView(v, nofly) {
-    if (v.type === 'quest' && !state.layers.quests) { state.layers.quests = true; store.set('layers2', state.layers); applyLayers(); }      // an opened action item must be visible
+    if (v.type === 'quest' && !state.layers.quests) { state.layers.quests = true; store.set('layers3', state.layers); applyLayers(); }      // an opened action item must be visible
     state.view = v; renderView(); if (!nofly) focusView(v);
   }
   function focusView(v) {
@@ -531,7 +615,7 @@
   }
   function bindSheet(el) {
     el.querySelectorAll('[data-go]').forEach(function (b) { b.onclick = function () { var p = b.dataset.go.split(':'); showView({ type: p[0], id: p[0] === 'hole' ? +p[1] : p[1] }); }; });
-    el.querySelectorAll('[data-chk]').forEach(function (c) { c.onchange = function () { state.layers[c.dataset.chk] = c.checked; store.set('layers2', state.layers); applyLayers(); }; });
+    el.querySelectorAll('[data-chk]').forEach(function (c) { c.onchange = function () { state.layers[c.dataset.chk] = c.checked; store.set('layers3', state.layers); applyLayers(); }; });
     var s = el.querySelector('.search');
     if (s) s.oninput = function () { el.querySelector('#plist').innerHTML = placesList(s.value); bindSheet(el.querySelector('#plist')); };
   }
@@ -563,7 +647,7 @@
     return '<h2>❗ ' + esc(nm(q.title)) + '</h2>' + chips([[t(q.priority), q.priority], [t(q.status), q.status === 'done' ? 'done' : ''], [q.area_ha + ' ' + t('ha')]]) + '<p>' + esc(nm(q.detail)) + '</p>';
   }
   function viewQuests() {
-    var out = '<h2>❗ ' + t('quests') + '</h2>';
+    var out = '<h2>❗ ' + t('quests') + '</h2><label class="check"><input type="checkbox" data-chk="quests"' + (state.layers.quests ? ' checked' : '') + '>' + t('show_quests') + '</label>';
     ['now', 'next', 'later'].forEach(function (pr) {
       var list = quests.filter(function (q) { return q.priority === pr; });
       if (list.length) out += '<h3>' + t(pr) + '</h3>' + questRows(list);
