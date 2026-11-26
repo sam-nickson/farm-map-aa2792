@@ -2,7 +2,7 @@
 const SHELL = 'bandurrias-shell';
 const CORE = ['./', 'index.html', 'style.css', 'app.js', 'geo.js', 'i18n.js', 'vault.js', 'build.json', 'manifest.webmanifest', 'vendor/leaflet.js', 'vendor/leaflet-rotate.js', 'vendor/leaflet.css',
   'icons/icon-192.png', 'icons/icon-180.png', 'icons/icon-512.png', 'icons/icon-512-maskable.png'];
-const DATA = ['meta', 'pampas', 'pois', 'golf', 'quests', 'terrain', 'boundary', 'rivers', 'waters', 'contours_wide', 'relief', 'names', 'canopy'];      // data/<name>.json, or .json.enc when build.json says enc:true
+const DATA = ['meta', 'pampas', 'pois', 'golf', 'quests', 'terrain', 'boundary', 'rivers', 'waters', 'contours_wide', 'relief', 'names', 'canopy', 'trails'];      // data/<name>.json, or .json.enc when build.json says enc:true
 const ext = (b) => (b.enc ? '.enc' : '');
 const tilesName = (v) => 'bandurrias-tiles-' + v;
 
@@ -67,6 +67,10 @@ self.addEventListener('message', (e) => {
     let done = s.total - missing.length, i = 0;
     const worker = async () => { while (i < missing.length) { const u = missing[i++]; try { const r = await fetch(u); if (r.ok) { await s.cache.put(u, r); done++; } } catch (_) { /* offline: leave for next time */ } if (done % 25 === 0) broadcast({ type: 'progress', done, total: s.total }); } };
     await Promise.all(Array.from({ length: 4 }, worker));
+    for (let pass = 0; pass < 2 && done < s.total; pass++) {      // a tile that failed once (flaky signal) gets two more tries, so the download can still finish
+      const left = []; for (const u of s.urls) if (!(await s.cache.match(u))) left.push(u);
+      for (const u of left) { try { const r = await fetch(u); if (r.ok) { await s.cache.put(u, r); done++; } } catch (_) { /* still offline */ } }
+    }
     broadcast({ type: 'progress', done, total: s.total });
   })());
 });

@@ -112,10 +112,6 @@ body.sheet-open #viewswitch { display: none; }
 @media (min-width: 700px) { body.sheet-open #viewswitch { display: flex; } }
 
 .wide .badge-m, .wide .pill, .wide .q-bubble, .wide .contour-label { display: none; }      /* whole-property view: no clutter */
-.frame-label span { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; font-weight: 800; font-size: 11px; color: var(--ink); background: rgba(255,246,217,.95); border: 1.5px solid var(--wood-ln); padding: 2px 9px; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.3); pointer-events: none; }
-@keyframes frame-in { from { opacity: 0; } to { opacity: 1; } }
-path.frame-box, .frame-label span { animation: frame-in .25s ease-out; }      /* the box and its label fade in when the property view opens */
-path.frame-box { cursor: pointer; }
 
 /* mini-map (orientation): whole property + a box for the current view; flat illustrated style in a wooden frame */
 #minimap { position: fixed; z-index: 1000; top: calc(var(--safe-t) + 66px); right: calc(var(--safe-r) + 12px); padding: 2px; border-radius: 13px; border: 2.5px solid var(--wood-dk); background: var(--cream); box-shadow: 0 3px 8px rgba(0,0,0,.35); pointer-events: none; line-height: 0; }
@@ -143,3 +139,9 @@ body.propview #modes { display: none; }
 .place-lake span, .place-falls span { color: #1d6f96; }
 html[lang=es] .place-label i.en, html:not([lang=es]) .place-label i.es { display: none; }
 .wide-contour-label span { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; font-size: 10px; font-weight: 800; font-style: italic; color: #5a3a1a; text-shadow: 0 0 3px #a9dd5f, 0 0 3px #a9dd5f, 0 0 3px #a9dd5f; pointer-events: none; }
+
+/* hiking trails: the name is plain italic text with a light halo, like the river names (the line itself is drawn in app.js) */
+.trail-label span { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; font-size: 9px; font-weight: 800; font-style: italic; letter-spacing: .03em; color: #4a3114; text-shadow: 0 0 3px #fff6d9, 0 0 3px #fff6d9, 0 0 3px #fff6d9, 0 0 4px #fff6d9; pointer-events: none; }
+
+.trail-label i { font-style: italic; }
+html[lang=es] .trail-label i.en, html:not([lang=es]) .trail-label i.es { display: none; }

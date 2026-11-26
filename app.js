@@ -14,17 +14,18 @@
     mode: 'existing',      // always opens in Existing (the language choice is the only remembered preference besides layer toggles)
     tilt: 'tilted',      // property view: 'tilted' (default: always the better tilt), 'auto' (tilt only if it helps >= 15%) or 'north' (north up)
     layers: Object.assign({ quests: true, labels: true, boundary: true }, store.get('layers3', {})),      // action areas are ON by default (layers3: the old key held the earlier default 'off')
+    trails: { pampa: false, property: true },      // Gaia trail per view (like the terrain): on in the property view, off in the pampa view; the 🥾 button toggles the current view
     terrain: { pampa: false, property: true },      // terrain (lines; + height tint in the pampa view) per view: off in the pampa view, on in the property view; the mountain button toggles the current view's
     view: null
   };
-  var clamping = false, canopyInfo, canopyLayer, placeNames, reliefInfo, reliefLayer, underRenderer, meta, pampas, pois, golf, quests, terrain, boundary, rivers, waters, wideContours, frameLabel, bbounds, closeFitZoom, zoneBounds, transitioning = false, transTimer, lastPortrait, G, map, tiles = {}, groups = {}, badgeMarkers = {}, tintRenderer, pampaPolys = {}, questPolys = {}, sitePills = [], gps = null;
+  var clamping = false, trailData, canopyInfo, canopyLayer, placeNames, reliefInfo, reliefLayer, underRenderer, meta, pampas, pois, golf, quests, terrain, boundary, rivers, waters, wideContours, bbounds, closeFitZoom, zoneBounds, transitioning = false, transTimer, lastPortrait, G, map, tiles = {}, groups = {}, badgeMarkers = {}, tintRenderer, pampaPolys = {}, questPolys = {}, sitePills = [], gps = null;
 
   var t = function (k) { return STR[state.lang][k] || STR.en[k] || k; };
   var nm = function (o) { return I18N.pick(o, state.lang); };
   var esc = function (s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
   function load() {
-    return Promise.all(['meta', 'pampas', 'pois', 'golf', 'quests', 'terrain', 'boundary', 'rivers', 'waters', 'contours_wide', 'relief', 'names', 'canopy'].map(function (n) { return Vault.json('data/' + n + '.json'); })).then(function (d) {
-      meta = d[0]; pampas = d[1]; pois = d[2]; golf = d[3]; quests = d[4]; terrain = d[5]; boundary = d[6]; rivers = d[7]; waters = d[8]; wideContours = d[9]; reliefInfo = d[10]; placeNames = d[11]; canopyInfo = d[12];
+    return Promise.all(['meta', 'pampas', 'pois', 'golf', 'quests', 'terrain', 'boundary', 'rivers', 'waters', 'contours_wide', 'relief', 'names', 'canopy', 'trails'].map(function (n) { return Vault.json('data/' + n + '.json'); })).then(function (d) {
+      meta = d[0]; pampas = d[1]; pois = d[2]; golf = d[3]; quests = d[4]; terrain = d[5]; boundary = d[6]; rivers = d[7]; waters = d[8]; wideContours = d[9]; reliefInfo = d[10]; placeNames = d[11]; canopyInfo = d[12]; trailData = d[13];
       init();
     }).catch(loadError);
   }
@@ -104,14 +105,14 @@
     map.createPane('relief', map._rotatePane); map.getPane('relief').style.zIndex = 140; map.getPane('relief').style.pointerEvents = 'none';      // soft hillshade of the whole zone, below everything else (the art, rivers, contours)
     map.createPane('canopy', map._rotatePane); map.getPane('canopy').style.zIndex = 130; map.getPane('canopy').style.pointerEvents = 'none';      // forest cover for the rest of the property: below the relief shading (140), the rivers / contours (150) and the art (200)
     buildRelief(); buildCanopy();
-    ['boundary', 'zone', 'frame', 'waters', 'watersIn', 'wideContours', 'wideContoursIn', 'wideContoursMid', 'wideLabelsMid', 'wideLabels', 'names', 'tint', 'contourMajor', 'contourMinor', 'contourLabels', 'pampas', 'golf', 'sites', 'badges', 'quests', 'gps'].forEach(function (n) { groups[n] = L.layerGroup().addTo(map); });
-    buildBoundary(); buildWaters(); buildNames(); buildTerrain(); buildPampas(); buildGolf(); buildSites(); buildQuests();
+    ['boundary', 'zone', 'waters', 'watersIn', 'wideContours', 'wideContoursIn', 'wideContoursMid', 'wideLabelsMid', 'wideLabels', 'names', 'tint', 'contourMajor', 'contourMinor', 'contourLabels', 'pampas', 'golf', 'sites', 'badges', 'quests', 'trails', 'gps'].forEach(function (n) { groups[n] = L.layerGroup().addTo(map); });
+    buildBoundary(); buildWaters(); buildNames(); buildTrails(); buildTerrain(); buildPampas(); buildGolf(); buildSites(); buildQuests();
     var farZoom = fit + 0.9;
     var minorZoom = fit + 0.6;      // 10 m contour lines appear from a normal working zoom (only if the terrain-lines layer is on)
     var zoomClass = function () { map.getContainer().classList.toggle('far', map.getZoom() < farZoom); applyMinorContours(map.getZoom() >= minorZoom); };
     map.on('zoomend', zoomClass); zoomClass();
     map.on('zoom', updateScale); updateScale();
-    map.on('move zoom', clampToZone); map.on('moveend zoomend', function () { updateMinZoom(); }); map.on('zoomend', updateView); map.on('zoomend', restyleWaters); map.on('zoomend rotate resize', placeFrameLabel); map.on('resize', onResize); lastPortrait = map.getSize().y >= map.getSize().x; updateView();
+    map.on('move zoom', clampToZone); map.on('moveend zoomend', function () { updateMinZoom(); }); map.on('zoomend', updateView); map.on('zoomend', restyleWaters); map.on('resize', onResize); lastPortrait = map.getSize().y >= map.getSize().x; updateView();
     map.on('rotate', function () { var br = map.getBearing(), sv = document.querySelector('#compass svg'); if (sv) sv.style.transform = 'rotate(' + br + 'deg)'; });      // the needle keeps pointing at true north
     buildMiniMap(); map.on('move zoom', updateMiniMap);
     map.on('click', function () { closeSheet(); });
@@ -119,7 +120,7 @@
     applyLang(); applyMode(); applyLayers();
     openFromHash();
     registerSW();
-    window.__app = { canopy: function () { return canopyLayer; }, canopyInfo: function () { return canopyInfo; }, terrainData: function () { return terrain; }, names: function () { return placeNames; }, reliefInfo: function () { return reliefInfo; }, under: function () { return underRenderer; }, contoursWide: function () { return wideContours; }, waters: function () { return waters; }, chooseBearing: chooseBearing, fitFor: fitFor, tiltAngles: tiltAngles, isTransitioning: function () { return transitioning; }, sites: function () { return pois; }, golf: function () { return golf; }, boundary: boundary, bbounds: bbounds, terrain: terrain, map: map, G: G, state: state, meta: meta };       // for tests / debugging
+    window.__app = { trails: function () { return trailData; }, canopy: function () { return canopyLayer; }, canopyInfo: function () { return canopyInfo; }, terrainData: function () { return terrain; }, names: function () { return placeNames; }, reliefInfo: function () { return reliefInfo; }, under: function () { return underRenderer; }, contoursWide: function () { return wideContours; }, waters: function () { return waters; }, chooseBearing: chooseBearing, fitFor: fitFor, tiltAngles: tiltAngles, isTransitioning: function () { return transitioning; }, sites: function () { return pois; }, golf: function () { return golf; }, boundary: boundary, bbounds: bbounds, terrain: terrain, map: map, G: G, state: state, meta: meta };       // for tests / debugging
   }
 
   function VaultTileLayer() {
@@ -254,23 +255,12 @@
       (lv.labels || []).forEach(function (p) { L.marker(G.m2ll(p[0], p[1]), { icon: L.divIcon({ className: 'wide-contour-label', html: '<span>' + lv.z + ' m</span>', iconSize: [0, 0] }), interactive: false, keyboard: false }).addTo(groups.wideLabels); });
     });
   }
-  function roundedFrame() {      // the close-up art's outline: the frame with rounded corners (meta.round metres), as lat/lngs
-    var r = meta.round || 0, x0 = meta.x0, x1 = meta.x1, y0 = meta.y0, y1 = meta.y1, pts = [], k, a;
-    [[x1 - r, y1 - r, 0], [x0 + r, y1 - r, 90], [x0 + r, y0 + r, 180], [x1 - r, y0 + r, 270]].forEach(function (c) {
-      for (k = 0; k <= 12; k++) { a = (c[2] + k * 90 / 12) * Math.PI / 180; pts.push(G.m2ll(c[0] + r * Math.cos(a), c[1] + r * Math.sin(a))); }
-    });
-    return pts;
-  }
   function buildBoundary() {
     var ll = boundary.ring.map(function (c) { return G.m2ll(c[0], c[1]); });
     L.polygon(ll, { fill: false, color: '#fff6d9', weight: 4, opacity: 0.85, interactive: false }).addTo(groups.boundary);                          // cream halo so the line reads on every background
     L.polygon(ll, { fill: false, color: '#b5402a', weight: 1.5, opacity: 1, dashArray: '8 6', className: 'boundary-line', interactive: false }).addTo(groups.boundary);
     // the edge of the mapped coverage zone: a firm thin line in both views (scrolling past it is not possible, see clampToZone)
     L.rectangle(zoneBounds, { fill: false, color: '#2f6f9f', weight: 2, opacity: 0.9, className: 'zone-line', interactive: false }).addTo(groups.zone);
-    // at whole-property zoom the detailed map is a small patch: mark it with a tappable box that jumps to the close-up
-    var fb = G.bounds(), box = L.polygon(roundedFrame(), { color: '#fff6d9', weight: 2, dashArray: '6 6', fill: true, fillColor: '#000', fillOpacity: 0, className: 'frame-box' }).addTo(groups.frame);      // no fill (the art shows undimmed); fill-opacity 0 still counts as painted, so the whole box stays tappable
-    box.on('click', function (e) { L.DomEvent.stopPropagation(e); goClose(); });
-    frameLabel = L.marker(L.latLngBounds(fb).getCenter(), { icon: L.divIcon({ className: 'frame-label', html: '<span></span>', iconSize: [0, 0] }), interactive: false, keyboard: false }).addTo(groups.frame);
   }
   function insideProperty(x, y) {      // ray casting on the outline (map metres)
     var r = boundary.ring, inside = false;
@@ -399,19 +389,25 @@
     }).catch(function () { /* no forest layer (e.g. offline before it was cached): the map still works */ });
   }
 
+  /* ---------- hiking trails (Gaia GPS route): dark brown casing + cream dashes; two name labels; tap opens the details in the property view ---------- */
+  function buildTrails() {      // the Gaia route: a thin dark casing + cream dashes (no tap action); two name labels in the rivers' style
+    trailData.trails.forEach(function (tr) {
+      tr.lines.forEach(function (ln) {
+        var ll = ln.map(function (c) { return G.m2ll(c[0], c[1]); });
+        L.polyline(ll, { color: '#3b2a14', weight: 2.8, opacity: 1, lineCap: 'round', lineJoin: 'round', className: 'trail-casing', interactive: false }).addTo(groups.trails);
+        L.polyline(ll, { color: '#fff6d9', weight: 1.2, opacity: 1, lineCap: 'butt', lineJoin: 'round', dashArray: '5 4', className: 'trail-dash', interactive: false }).addTo(groups.trails);
+      });
+      tr.labels.forEach(function (p) {
+        L.marker(G.m2ll(p[0], p[1]), { icon: L.divIcon({ className: 'trail-label', html: '<span><i class="en">' + esc(tr.name.en) + '</i><i class="es">' + esc(tr.name.es) + '</i></span>', iconSize: [0, 0] }), interactive: false, keyboard: false }).addTo(groups.trails);      // both languages in the markup: CSS shows the current one
+      });
+    });
+  }
+
   function buildRelief() {      // one image over the whole coverage zone (decrypted in the browser when the build is encrypted)
     var b = reliefInfo.bounds, url = 'data/relief.webp' + (Vault.enc ? '.enc' : '');
     (Vault.enc ? Vault.blobURL(url) : Promise.resolve(url)).then(function (u) {
       reliefLayer = L.imageOverlay(u, [G.m2ll(b[0], b[1]), G.m2ll(b[2], b[3])], { pane: 'relief', interactive: false, className: 'relief-img', opacity: map.getContainer().classList.contains('wide') ? 1 : 0.6 }).addTo(map);
     }).catch(function () { /* no relief (e.g. offline before it was cached): the map still works */ });
-  }
-
-  function placeFrameLabel() {      // the 'Pampa view' label sits just below the box on screen (tilt included), not on top of the art
-    if (!frameLabel || !map) return;
-    var fb = L.latLngBounds(G.bounds()), cs = [fb.getNorthWest(), fb.getNorthEast(), fb.getSouthEast(), fb.getSouthWest()].map(function (c) { return map.latLngToContainerPoint(c); });
-    var maxY = Math.max.apply(null, cs.map(function (p) { return p.y; })), low = cs.filter(function (p) { return p.y > maxY - 4; });
-    var x = low.reduce(function (a, p) { return a + p.x; }, 0) / low.length;
-    frameLabel.setLatLng(map.containerPointToLatLng([x, maxY + 16]));
   }
 
   function updateView() {      // the clicker shows which view you are in: close-up (the mapped area) or the whole property
@@ -422,8 +418,6 @@
     $('tilt-btn').hidden = !wide; applyLayers();
     if (wide) groups.names.addTo(map); else map.removeLayer(groups.names);      // names: property view only
     if (reliefLayer) reliefLayer.setOpacity(wide ? 1 : 0.6);      // full strength in the property view, quieter around the close-up
-    if (wide) { groups.frame.addTo(map); placeFrameLabel(); } else map.removeLayer(groups.frame);
-    var fl = document.querySelector('.frame-label span'); if (fl) fl.textContent = t('view_close');
     if (!wide && !transitioning && Math.abs(normDeg(map.getBearing())) > 0.5) tweenBearing(0, 300);      // zooming back into the pampa view stands the map upright again
   }
 
@@ -532,6 +526,9 @@
     c.classList.toggle('nolabels', !state.layers.labels);
     if (state.layers.quests && curView() === 'pampa') groups.quests.addTo(map); else map.removeLayer(groups.quests);      // the action areas belong to the pampa view
     $('btn-quests').classList.toggle('on', state.layers.quests);
+    var tOn = state.trails[curView()];
+    if (tOn) groups.trails.addTo(map); else map.removeLayer(groups.trails);
+    $('btn-trails').classList.toggle('on', tOn);
     applyBoundary();
     applyTerrain();
   }
@@ -553,6 +550,7 @@
       b.onclick = function () { state.mode = b.dataset.mode; applyMode(); toast(t(state.mode) + ': ' + t(state.mode + '_sub'), 1800); };
     });
     $('btn-quests').onclick = function () { if (!state.layers.quests) { state.layers.quests = true; store.set('layers3', state.layers); applyLayers(); } showView({ type: 'quests' }); };      // opens the action-items list AND shows their areas on the map; the switch in the list turns the areas off
+    $('btn-trails').onclick = function () { var v = curView(); state.trails[v] = !state.trails[v]; applyLayers(); toast(t('trails') + ': ' + (state.trails[v] ? t('on') : t('off')), 1500); };
     $('btn-places').onclick = function () { showView({ type: 'places' }); };
     $('btn-layers').onclick = function () { showView({ type: 'layers' }); };
     $('btn-locate').onclick = toggleGPS;
