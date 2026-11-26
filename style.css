@@ -76,7 +76,6 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .q-bubble.now { background: var(--red); } .q-bubble.next { background: #f08c00; color: #fff; } .q-bubble.later { background: #8a8a8a; } .q-bubble.done { background: #3fa83f; animation: none; }
 @keyframes bob { 50% { transform: translateY(-7px); } }
 path.quest-poly { stroke-dasharray: 8 6; animation: march 1.2s linear infinite; } @keyframes march { to { stroke-dashoffset: -28; } }
-.nogolf path.golf-hit { display: none; }
 .gps-dot { width: 18px; height: 18px; border-radius: 50%; background: var(--blue); border: 3px solid #fff; box-shadow: 0 0 0 0 rgba(47,143,216,.6), 0 2px 6px rgba(0,0,0,.4); animation: ring 1.8s infinite; }
 @keyframes ring { to { box-shadow: 0 0 0 16px rgba(47,143,216,0), 0 2px 6px rgba(0,0,0,.4); } }
 body.sheet-open #fabs { display: none; }
@@ -97,7 +96,56 @@ body.sheet-open #legend { display: none; }
 #lock { position: fixed; inset: 0; z-index: 3000; display: grid; place-items: center; background: #a9dd5f; padding: 24px; }
 #lock[hidden] { display: none; }
 #lock-form { width: min(92vw, 340px); display: flex; flex-direction: column; gap: 14px; align-items: center; text-align: center; font-weight: 800; }
-#lock-pass { width: 100%; padding: 14px 16px; font: inherit; font-size: 18px; border-radius: 14px; border: 2px solid var(--wood-dk); background: var(--cream); }
+#lock-pass { width: 100%; padding-right: 84px !important; padding: 14px 16px; font: inherit; font-size: 18px; border-radius: 14px; border: 2px solid var(--wood-dk); background: var(--cream); }
 #lock-btn { width: 100%; padding: 13px; font-size: 18px; font-weight: 900; border-radius: 14px; border: 2px solid var(--wood-dk); background: var(--green); color: #fff; box-shadow: 0 3px 0 var(--wood-dk); }
 #lock-btn:disabled { opacity: .6; } #lock-msg { min-height: 1.4em; margin: 0; color: var(--red); } #lock-hint { margin: 0; }
 #lock-lang { position: fixed; top: calc(var(--safe-t) + 12px); right: calc(var(--safe-r) + 12px); }
+
+/* compass (north is always up; tap = whole map) + scale bar */
+#compass { position: fixed; z-index: 1000; top: calc(var(--safe-t) + 62px); left: calc(var(--safe-l) + 12px); width: 52px; height: 52px; padding: 0; border: 0; background: none; filter: drop-shadow(0 3px 3px rgba(0,0,0,.3)); }
+#compass:active { transform: scale(.94); }
+#scale { position: fixed; z-index: 1000; left: calc(var(--safe-l) + 14px); bottom: calc(var(--safe-b) + 80px); display: flex; flex-direction: column; gap: 3px; font-size: 11px; font-weight: 900; color: var(--cream); text-shadow: 0 0 3px var(--wood-dk), 0 0 3px var(--wood-dk), 0 1px 2px var(--wood-dk); pointer-events: none; }
+#scale-bar { height: 8px; min-width: 6px; border: 2.5px solid var(--wood-dk); border-top: 0; background: transparent; box-shadow: 0 1px 0 rgba(255,246,217,.55); }
+body.sheet-open #scale, body.sheet-open #compass { display: none; }
+#legend { bottom: calc(var(--safe-b) + 122px); }
+@media (min-width: 700px) { body.sheet-open #scale, body.sheet-open #compass { display: block; } }
+
+/* close-up / whole-property clicker */
+#viewswitch { position: fixed; z-index: 1000; top: calc(var(--safe-t) + 124px); left: calc(var(--safe-l) + 12px); display: flex; flex-direction: column; background: var(--wood-dk); padding: 3px; border-radius: 14px; box-shadow: 0 3px 8px rgba(0,0,0,.3); }
+#viewswitch button { border: 0; background: transparent; color: #f2d7a8; font-weight: 800; font-size: 11px; padding: 7px 9px; border-radius: 11px; white-space: nowrap; text-align: center; }
+#viewswitch button.on { background: var(--cream); color: var(--ink); box-shadow: 0 2px 0 rgba(0,0,0,.25); }
+body.sheet-open #viewswitch { display: none; }
+@media (min-width: 700px) { body.sheet-open #viewswitch { display: flex; } }
+
+.wide .badge-m, .wide .pill, .wide .q-bubble, .wide .contour-label { display: none; }      /* whole-property view: no clutter */
+.frame-label span { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; font-weight: 800; font-size: 11px; color: var(--ink); background: rgba(255,246,217,.95); border: 1.5px solid var(--wood-ln); padding: 2px 9px; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.3); pointer-events: none; }
+@keyframes frame-in { from { opacity: 0; } to { opacity: 1; } }
+path.frame-box, .frame-label span { animation: frame-in .25s ease-out; }      /* the box and its label fade in when the property view opens */
+path.frame-box { cursor: pointer; }
+
+/* mini-map (orientation): whole property + a box for the current view; flat illustrated style in a wooden frame */
+#minimap { position: fixed; z-index: 1000; top: calc(var(--safe-t) + 66px); right: calc(var(--safe-r) + 12px); padding: 2px; border-radius: 13px; border: 2.5px solid var(--wood-dk); background: var(--cream); box-shadow: 0 3px 8px rgba(0,0,0,.35); pointer-events: none; line-height: 0; }
+#minimap[hidden] { display: none; }
+#minimap svg { display: block; border-radius: 9px; overflow: hidden; }
+
+.lock-field { position: relative; width: 100%; }
+#lock-eye { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); border: 0; background: #f2e2b4; color: var(--ink); font: inherit; font-size: 14px; font-weight: 800; padding: 7px 12px; border-radius: 10px; }
+#lock-pass:disabled { opacity: .55; }
+
+/* property view: tilt button, hidden mode bar, compass that follows the map rotation */
+#tilt-btn { position: fixed; z-index: 1000; top: calc(var(--safe-t) + 204px); left: calc(var(--safe-l) + 12px); border: 2px solid var(--wood-dk); background: var(--cream); color: var(--ink); font-weight: 800; font-size: 11px; padding: 6px 10px; border-radius: 14px; box-shadow: 0 2px 0 var(--wood-dk), 0 3px 8px rgba(0,0,0,.25); white-space: nowrap; }
+#tilt-btn[hidden] { display: none; }
+body.sheet-open #tilt-btn { display: none; }
+body.propview #modes { display: none; }
+#compass svg { transition: transform .2s linear; }
+@media (min-width: 700px) { body.sheet-open #tilt-btn { display: block; } }
+
+
+.place-label span { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; text-align: center; pointer-events: none; font-size: 11px; font-weight: 800; color: #5a3a1a; text-shadow: 0 0 3px #a9dd5f, 0 0 3px #a9dd5f, 0 0 3px #a9dd5f, 0 0 4px #a9dd5f; }
+.place-label i { font-style: normal; display: block; }
+.place-label b { display: block; font-size: 10px; font-weight: 800; }
+.place-river span { font-style: italic; color: #1d6f96; letter-spacing: .04em; }
+.place-river i { font-style: italic; }
+.place-lake span, .place-falls span { color: #1d6f96; }
+html[lang=es] .place-label i.en, html:not([lang=es]) .place-label i.es { display: none; }
+.wide-contour-label span { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; font-size: 10px; font-weight: 800; font-style: italic; color: #5a3a1a; text-shadow: 0 0 3px #a9dd5f, 0 0 3px #a9dd5f, 0 0 3px #a9dd5f; pointer-events: none; }

@@ -1,8 +1,8 @@
 /* Bandurrias service worker: app shell + data stale-while-revalidate, tiles cache-first, full offline download on request. */
 const SHELL = 'bandurrias-shell';
-const CORE = ['./', 'index.html', 'style.css', 'app.js', 'geo.js', 'i18n.js', 'vault.js', 'build.json', 'manifest.webmanifest', 'vendor/leaflet.js', 'vendor/leaflet.css',
-  'icons/icon-192.png', 'icons/icon-180.png', 'icons/icon-512.png'];
-const DATA = ['meta', 'pampas', 'pois', 'golf', 'quests', 'terrain'];      // data/<name>.json, or .json.enc when build.json says enc:true
+const CORE = ['./', 'index.html', 'style.css', 'app.js', 'geo.js', 'i18n.js', 'vault.js', 'build.json', 'manifest.webmanifest', 'vendor/leaflet.js', 'vendor/leaflet-rotate.js', 'vendor/leaflet.css',
+  'icons/icon-192.png', 'icons/icon-180.png', 'icons/icon-512.png', 'icons/icon-512-maskable.png'];
+const DATA = ['meta', 'pampas', 'pois', 'golf', 'quests', 'terrain', 'boundary', 'rivers', 'waters', 'contours_wide', 'relief', 'names'];      // data/<name>.json, or .json.enc when build.json says enc:true
 const ext = (b) => (b.enc ? '.enc' : '');
 const tilesName = (v) => 'bandurrias-tiles-' + v;
 
@@ -20,7 +20,7 @@ self.addEventListener('install', (e) => {
   self.skipWaiting();
   e.waitUntil((async () => {
     const b = await getMeta(), c = await caches.open(SHELL);
-    await c.addAll([...CORE, ...DATA.map((n) => `data/${n}.json${ext(b)}`)].map((u) => new Request(u, { cache: 'reload' })));
+    await c.addAll([...CORE, ...DATA.map((n) => `data/${n}.json${ext(b)}`), `data/relief.webp${ext(b)}`].map((u) => new Request(u, { cache: 'reload' })));
   })());
 });
 self.addEventListener('activate', (e) => {

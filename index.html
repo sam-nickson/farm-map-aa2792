@@ -19,7 +19,7 @@
 <body>
 <div id="map" aria-label="Map"></div>
 
-<div id="lock" hidden><form id="lock-form" autocomplete="on"><div class="ribbon">Bandurrias</div><p id="lock-hint"></p><input type="text" name="username" value="map" autocomplete="username" hidden><input id="lock-pass" type="password" autocomplete="current-password" autocapitalize="none" spellcheck="false" aria-label="Passphrase"><button id="lock-btn" type="submit"></button><p id="lock-msg" role="alert"></p><button id="lock-lang" type="button" class="round"></button></form></div>
+<div id="lock" hidden><form id="lock-form" autocomplete="on"><div class="ribbon">Bandurrias</div><p id="lock-hint"></p><input type="text" name="username" value="map" autocomplete="username" hidden><div class="lock-field"><input id="lock-pass" type="password" autocomplete="current-password" autocapitalize="none" spellcheck="false" aria-label="Passphrase"><button id="lock-eye" type="button" aria-pressed="false"></button></div><button id="lock-btn" type="submit"></button><p id="lock-msg" role="alert"></p><button id="lock-lang" type="button" class="round"></button></form></div>
 
 <header id="top">
   <div class="ribbon" id="title">Bandurrias</div>
@@ -43,6 +43,17 @@
   <button type="button" data-mode="prospective"><span data-i18n="prospective">Prospective</span></button>
 </nav>
 
+<button id="compass" type="button" aria-label="North is up"><svg viewBox="0 0 64 64" width="52" height="52" aria-hidden="true"><circle cx="32" cy="32" r="29" fill="#fff6d9" stroke="#9c6b30" stroke-width="3"/><circle cx="32" cy="32" r="23" fill="none" stroke="#d9b06a" stroke-width="1"/><polygon points="32,10 24,34 40,34" fill="#d9482f" stroke="#7e2616" stroke-width="1.5" stroke-linejoin="round"/><polygon points="32,54 24,30 40,30" fill="#f0e4c4" stroke="#9c6b30" stroke-width="1.5" stroke-linejoin="round"/><text x="32" y="9" text-anchor="middle" font-size="11" font-weight="900" fill="#6b3f1d" stroke="#fff6d9" stroke-width="2.5" paint-order="stroke">N</text></svg></button>
+
+<div id="minimap" aria-hidden="true"><svg viewBox="0 0 120 90" width="120" height="90"><defs><pattern id="mm-stripes" width="120" height="14" patternUnits="userSpaceOnUse"><rect width="120" height="14" fill="#a9dd5f"/><rect y="5" width="120" height="6" fill="#b6e56e" opacity=".55"/></pattern></defs><rect width="120" height="90" fill="url(#mm-stripes)"/><polygon id="mm-prop" points="" fill="#3f8f3a" stroke="#2c6b27" stroke-width="1.6" stroke-linejoin="round"/><polygon id="mm-rim" points="" fill="none" stroke="#7fd36a" stroke-width=".7" stroke-linejoin="round"/><g id="mm-rivers" fill="none" stroke="#7fdcf2" stroke-linecap="round" stroke-linejoin="round"></g><g id="mm-patches" fill="#e3f5a0"></g><polygon id="mm-line" points="" fill="none" stroke="#fff6d9" stroke-width="1" stroke-dasharray="2.4 1.6" stroke-linejoin="round"/><rect id="mm-view" x="0" y="0" width="0" height="0" fill="rgba(242,177,52,.35)" stroke="#f2b134" stroke-width="1.6" paint-order="stroke"/><circle id="mm-gps" r="3" fill="#2f8fd8" stroke="#fff" stroke-width="1.2" hidden/></svg></div>
+
+<div id="viewswitch" role="group" aria-label="View"><button id="view-close" type="button" class="on"></button><button id="view-property" type="button"></button></div>
+
+
+<button id="tilt-btn" type="button" hidden></button>
+
+<div id="scale" aria-label="Scale"><span id="scale-label"></span><div id="scale-bar"></div></div>
+
 <div id="legend" hidden><div id="legend-title"></div><div id="legend-bar"></div><div class="ends"><span id="lg-low"></span><span id="lg-high"></span></div><div id="legend-note"></div></div>
 
 <section id="sheet" hidden>
@@ -53,6 +64,7 @@
 <div id="toast" hidden></div>
 
 <script src="vendor/leaflet.js"></script>
+<script src="vendor/leaflet-rotate.js"></script>
 <script src="vault.js"></script>
 <script src="geo.js"></script>
 <script src="i18n.js"></script>

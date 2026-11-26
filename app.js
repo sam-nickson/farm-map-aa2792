@@ -11,35 +11,63 @@
   };
   var state = {
     lang: store.get('lang', (navigator.language || 'en').slice(0, 2) === 'es' ? 'es' : 'en'),
-    mode: store.get('mode', 'existing'),
-    layers: Object.assign({ quests: true, labels: true, golf: true, terrain: true }, store.get('layers', {})),
+    mode: 'existing',      // always opens in Existing (the language choice is the only remembered preference besides layer toggles)
+    tilt: 'auto',      // property view: 'auto' (best fit), 'north' (north up) or 'tilted'
+    layers: Object.assign({ quests: false, labels: true, boundary: true }, store.get('layers2', {})),
+    terrain: { pampa: false, property: true },      // terrain (lines; + height tint in the pampa view) per view: off in the pampa view, on in the property view; the mountain button toggles the current view's
     view: null
   };
-  var meta, pampas, pois, golf, quests, terrain, G, map, tiles = {}, groups = {}, badgeMarkers = {}, tintRenderer, pampaPolys = {}, questPolys = {}, sitePills = [], gps = null;
+  var clamping = false, placeNames, reliefInfo, reliefLayer, underRenderer, meta, pampas, pois, golf, quests, terrain, boundary, rivers, waters, wideContours, frameLabel, bbounds, closeFitZoom, zoneBounds, transitioning = false, transTimer, lastPortrait, G, map, tiles = {}, groups = {}, badgeMarkers = {}, tintRenderer, pampaPolys = {}, questPolys = {}, sitePills = [], gps = null;
 
   var t = function (k) { return STR[state.lang][k] || STR.en[k] || k; };
   var nm = function (o) { return I18N.pick(o, state.lang); };
   var esc = function (s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
   function load() {
-    return Promise.all(['meta', 'pampas', 'pois', 'golf', 'quests', 'terrain'].map(function (n) { return Vault.json('data/' + n + '.json'); })).then(function (d) {
-      meta = d[0]; pampas = d[1]; pois = d[2]; golf = d[3]; quests = d[4]; terrain = d[5];
+    return Promise.all(['meta', 'pampas', 'pois', 'golf', 'quests', 'terrain', 'boundary', 'rivers', 'waters', 'contours_wide', 'relief', 'names'].map(function (n) { return Vault.json('data/' + n + '.json'); })).then(function (d) {
+      meta = d[0]; pampas = d[1]; pois = d[2]; golf = d[3]; quests = d[4]; terrain = d[5]; boundary = d[6]; rivers = d[7]; waters = d[8]; wideContours = d[9]; reliefInfo = d[10]; placeNames = d[11];
       init();
     }).catch(loadError);
   }
+  /* ---------- lock screen: show/hide passphrase + attempt limit ----------
+     Limit: MAX_TRIES wrong attempts in a row lock the form on THIS device for LOCK_HOURS. It stops casual guessing at the lock screen only; it cannot stop someone who
+     downloads the encrypted files and tries passphrases offline (the passphrase strength does that), and clearing the site data resets it. */
+  var MAX_TRIES = window.__MAX_TRIES || 10, LOCK_MS = (window.__LOCK_HOURS || 168) * 3600 * 1000;
+  function lockState() { var l = store.get('lock', { n: 0, until: 0 }); return { n: l.n || 0, until: l.until || 0 }; }
+  function fmtWait(ms) {
+    var m = Math.ceil(ms / 60000), h = Math.floor(m / 60), d = Math.floor(h / 24); m = m % 60; h = h % 24;
+    if (d) return d + ' ' + t('days') + (h ? ' ' + h + ' h' : '');
+    return h ? (h + ' h' + (m ? ' ' + m + ' min' : '')) : m + ' min';
+  }
   function lockText() {
     $('lock-hint').textContent = t('lock_hint'); $('lock-btn').textContent = t('lock_btn'); $('lock-pass').placeholder = t('lock_pass'); $('lock-lang').textContent = t('lang');
+    $('lock-eye').textContent = $('lock-pass').type === 'password' ? t('lock_show') : t('lock_hide');
+    paintLock();
+  }
+  function paintLock() {      // message + enabled state from the stored attempt counter
+    var l = lockState(), now = Date.now(), msg = $('lock-msg'), locked = l.until > now;
+    $('lock-btn').disabled = locked; $('lock-pass').disabled = locked;
+    if (locked) msg.textContent = t('lock_locked').replace('{t}', fmtWait(l.until - now));
+    else if (l.n > 0) msg.textContent = t('lock_wrong') + ' · ' + t('lock_left').replace('{n}', MAX_TRIES - l.n);
+    else msg.textContent = '';
   }
   function showLock() {
-    var el = $('lock'); el.hidden = false; lockText(); $('lock-pass').focus();
+    var el = $('lock'); el.hidden = false; lockText(); if (!$('lock-pass').disabled) $('lock-pass').focus();
     $('lock-lang').onclick = function () { state.lang = state.lang === 'en' ? 'es' : 'en'; store.set('lang', state.lang); lockText(); };
+    $('lock-eye').onclick = function () { var p = $('lock-pass'); p.type = p.type === 'password' ? 'text' : 'password'; $('lock-eye').setAttribute('aria-pressed', p.type === 'text'); lockText(); p.focus(); };
+    setInterval(function () { if (!el.hidden) { var l = lockState(); if (l.until && l.until <= Date.now()) { store.set('lock', { n: 0, until: 0 }); } paintLock(); } }, 30000);
     $('lock-form').onsubmit = function (ev) {
       ev.preventDefault();
+      var l = lockState(); if (l.until > Date.now()) { paintLock(); return; }
+      if (l.until) { l = { n: 0, until: 0 }; store.set('lock', l); }      // a finished lock-out gives a fresh set of attempts
       var v = $('lock-pass').value; if (!v) return;
       $('lock-msg').textContent = t('lock_working'); $('lock-btn').disabled = true;
+      var fail = function () {
+        var cur = lockState(); cur.n += 1; if (cur.n >= MAX_TRIES) cur.until = Date.now() + LOCK_MS;
+        store.set('lock', cur); $('lock-pass').disabled = false; $('lock-btn').disabled = false; paintLock(); if (!cur.until) $('lock-pass').select();
+      };
       Vault.unlock(v).then(function (ok) {
-        if (ok) { el.hidden = true; $('lock-pass').value = ''; load(); }
-        else { $('lock-msg').textContent = t('lock_wrong'); $('lock-btn').disabled = false; $('lock-pass').select(); }
-      }).catch(function () { $('lock-msg').textContent = t('lock_wrong'); $('lock-btn').disabled = false; });
+        if (ok) { store.set('lock', { n: 0, until: 0 }); el.hidden = true; $('lock-pass').value = ''; $('lock-pass').type = 'password'; load(); } else fail();
+      }).catch(fail);
     };
   }
   Vault.init().then(function (st) { if (st === 'locked') showLock(); else load(); }).catch(loadError);
@@ -52,31 +80,45 @@
     G = Geo.make(meta);
     var b = G.bounds();
     map = L.map('map', { crs: L.CRS.Simple, zoomControl: false, attributionControl: false, zoomSnap: 0.25, zoomDelta: 0.5, wheelPxPerZoomLevel: 90,
-      maxZoom: meta.zmax + 1, inertia: true, bounceAtZoomLimits: false, tap: true });
-    var fit = map.getBoundsZoom(b, false);
-    map.setMinZoom(fit - 0.75);
-    map.setMaxBounds(L.latLngBounds(b).pad(0.15));
+      maxZoom: meta.zmax + 1, inertia: true, bounceAtZoomLimits: false, tap: true,
+      rotate: true, bearing: 0, touchRotate: false, shiftKeyRotate: false, rotateControl: false });      // rotation (leaflet-rotate) is driven by the app only: the property view tilts to fit the screen
+    var fit = map.getBoundsZoom(b, false); closeFitZoom = fit;
+    bbounds = L.latLngBounds(boundary.ring.map(function (c) { return G.m2ll(c[0], c[1]); }));      // the whole property
+    var zn = boundary.zone;      // coverage zone = everything the default property view can show on any supported screen, plus a margin (computed in export_data.py)
+    zoneBounds = L.latLngBounds(G.m2ll(zn[0], zn[1]), G.m2ll(zn[2], zn[3]));
+    updateMinZoom();
     map.fitBounds(b);
     var TileLayer = Vault.enc ? VaultTileLayer() : L.TileLayer;      // encrypted builds fetch .enc tiles and decrypt them in the browser
     meta.layers.forEach(function (n) {      // one opaque tile set per mode (bare | existing | prospective)
       tiles[n] = new TileLayer('tiles/' + n + '/{z}/{x}/{y}.webp' + (Vault.enc ? '.enc' : '') + '?v=' + meta.tiles_v, { tileSize: meta.tile, minNativeZoom: 0, maxNativeZoom: meta.zmax - (L.Browser.retina ? 1 : 0), detectRetina: true,
         bounds: b, noWrap: true, keepBuffer: 4, className: 'tile-base' });      // retina screens load the next zoom level's tiles (half-size) for crisp art
+      tiles[n].options.minZoom = -10;      // draw (scaled down from the z0 tile) at every zoom: the default minZoom 0 made the art vanish in the property view; must be set AFTER construction because detectRetina resets it to >= 0
       tiles[n].on('tileloadstart', function (e) { var s = tiles[n].getTileSize(); e.tile.style.width = (s.x + 1) + 'px'; e.tile.style.height = (s.y + 1) + 'px'; });      // 1px overlap hides sub-pixel seams
+      tiles[n].on('add', function () { tiles[n].__ready = false; });          // a (re)added set is not ready until its tiles have loaded
+      tiles[n].on('load', function () { tiles[n].__ready = true; settleTiles(false); });
     });
     map.createPane('tint'); map.getPane('tint').style.zIndex = 250; map.getPane('tint').style.pointerEvents = 'none';      // blended with the tiles in CSS (mix-blend-mode: color) so map detail shows through
     tintRenderer = L.svg({ pane: 'tint' });
-    ['tint', 'contourMajor', 'contourMinor', 'contourLabels', 'pampas', 'golf', 'sites', 'badges', 'quests', 'gps'].forEach(function (n) { groups[n] = L.layerGroup().addTo(map); });
-    buildTerrain(); buildPampas(); buildGolf(); buildSites(); buildQuests();
+    map.createPane('under', map._rotatePane); map.getPane('under').style.zIndex = 150; map.getPane('under').style.pointerEvents = 'none';      // below the art (tile pane 200): rivers / lakes / contours outside the frame show through the art's soft edge and never draw over it
+    underRenderer = L.svg({ pane: 'under' });
+    map.createPane('relief', map._rotatePane); map.getPane('relief').style.zIndex = 120; map.getPane('relief').style.pointerEvents = 'none';      // soft hillshade of the whole zone, below everything else (the art, rivers, contours)
+    buildRelief();
+    ['boundary', 'zone', 'frame', 'waters', 'watersIn', 'wideContours', 'wideContoursIn', 'wideLabels', 'names', 'tint', 'contourMajor', 'contourMinor', 'contourLabels', 'pampas', 'golf', 'sites', 'badges', 'quests', 'gps'].forEach(function (n) { groups[n] = L.layerGroup().addTo(map); });
+    buildBoundary(); buildWaters(); buildNames(); buildTerrain(); buildPampas(); buildGolf(); buildSites(); buildQuests();
     var farZoom = fit + 0.9;
-    var minorZoom = fit + 1.6;      // 10 m contours only when zoomed in, so the overview stays clean
+    var minorZoom = fit + 0.6;      // 10 m contour lines appear from a normal working zoom (only if the terrain-lines layer is on)
     var zoomClass = function () { map.getContainer().classList.toggle('far', map.getZoom() < farZoom); applyMinorContours(map.getZoom() >= minorZoom); };
     map.on('zoomend', zoomClass); zoomClass();
+    map.on('zoom', updateScale); updateScale();
+    map.on('move zoom', clampToZone); map.on('moveend zoomend', function () { updateMinZoom(); }); map.on('zoomend', updateView); map.on('zoomend', restyleWaters); map.on('zoomend rotate resize', placeFrameLabel); map.on('resize', onResize); lastPortrait = map.getSize().y >= map.getSize().x; updateView();
+    map.on('rotate', function () { var br = map.getBearing(), sv = document.querySelector('#compass svg'); if (sv) sv.style.transform = 'rotate(' + br + 'deg)'; });      // the needle keeps pointing at true north
+    buildMiniMap(); map.on('move zoom', updateMiniMap);
     map.on('click', function () { closeSheet(); });
     wireUI();
     applyLang(); applyMode(); applyLayers();
     openFromHash();
     registerSW();
-    window.__app = { terrain: terrain, map: map, G: G, state: state, meta: meta };       // for tests / debugging
+    window.__app = { names: function () { return placeNames; }, reliefInfo: function () { return reliefInfo; }, under: function () { return underRenderer; }, contoursWide: function () { return wideContours; }, waters: function () { return waters; }, chooseBearing: chooseBearing, fitFor: fitFor, tiltAngles: tiltAngles, isTransitioning: function () { return transitioning; }, sites: function () { return pois; }, golf: function () { return golf; }, boundary: boundary, bbounds: bbounds, terrain: terrain, map: map, G: G, state: state, meta: meta };       // for tests / debugging
   }
 
   function VaultTileLayer() {
@@ -158,6 +200,46 @@
   }
   function rampCSS(t) { return 'rgb(' + rampRGB(t).join(',') + ')'; }
   function tFor(z) { return (z - terrain.range[0]) / (terrain.range[1] - terrain.range[0]); }
+  /* ---------- property view: rivers + lakes (reconciled set) and 50 m / 100 m contours across the coverage zone ---------- */
+  var RIVER_PX = { major: 8, river: 4.2 }, RIVER_M = { major: 14, river: 6 }, waterLayers = [];      // Rio Blanco clearly bigger; every other river the same width. px minimums at the property zoom, real metres when zoomed in (so they meet the art's rivers)
+  function waterWeights(cls) { var ppm = pxPerMetre(), core = Math.max(RIVER_PX[cls], RIVER_M[cls] * ppm); return { core: core, bank: core + Math.max(3, 7 * ppm), hl: Math.max(1.1, core * 0.13) }; }
+  function restyleWaters() { if (!map) return; waterLayers.forEach(function (o) { o.l.setStyle({ weight: waterWeights(o.cls)[o.part] }); }); }
+  function buildWaters() {
+    var ll = function (pts) { return pts.map(function (c) { return G.m2ll(c[0], c[1]); }); };
+    waters.tarns.forEach(function (t2) { L.polygon(ll(t2.pts), { fillColor: '#8fd3f4', fillOpacity: 1, color: '#ecd596', weight: 2.5, className: 'tarn', interactive: false, renderer: underRenderer }).addTo(groups.waters); });
+    ['bank', 'core', 'hl'].forEach(function (part) {      // all banks first, then all cores, then the pale centre dashes (as in the art's rivers), so rivers join cleanly where they meet
+      waters.rivers.forEach(function (r) {
+        var l = L.polyline(ll(r.pts), { color: part === 'bank' ? '#ecd596' : part === 'core' ? '#3fc1e6' : '#e4f6fc', weight: waterWeights(r.cls)[part], opacity: part === 'hl' ? 0.85 : 1, lineCap: part === 'hl' ? 'butt' : 'round', lineJoin: 'round', dashArray: part === 'hl' ? '10 14' : null, className: 'river-' + part + (r.cls === 'major' ? ' river-major' : ''), interactive: false, renderer: r.f ? undefined : underRenderer })
+          .addTo(r.f ? groups.watersIn : groups.waters);      // f=0: outside the close-up frame (both views); f=1: inside it (user-drawn rivers the art does not have; both views)
+        waterLayers.push({ l: l, cls: r.cls, part: part });
+      });
+    });
+    wideContours.levels.forEach(function (lv) {
+      var major = lv.z % wideContours.major === 0;
+      var style = { color: '#8a6a3a', weight: major ? 1.3 : 0.7, opacity: major ? 0.75 : 0.4, interactive: false }, ll = function (ln) { return ln.map(function (c) { return G.m2ll(c[0], c[1]); }); };
+      lv.lines.forEach(function (ln) { L.polyline(ll(ln), L.extend({ renderer: underRenderer, className: 'wide-contour' + (major ? ' wide-major' : '') }, style)).addTo(groups.wideContours); });      // outside the close-up frame: under the art
+      (lv.lines_in || []).forEach(function (ln) { L.polyline(ll(ln), L.extend({ className: 'wide-contour wide-contour-in' + (major ? ' wide-major' : '') }, style)).addTo(groups.wideContoursIn); });      // inside it: over the art, property view only (same surface as the close-up contours, so they continue each other)
+      (lv.labels || []).forEach(function (p) { L.marker(G.m2ll(p[0], p[1]), { icon: L.divIcon({ className: 'wide-contour-label', html: '<span>' + lv.z + ' m</span>', iconSize: [0, 0] }), interactive: false, keyboard: false }).addTo(groups.wideLabels); });
+    });
+  }
+  function buildBoundary() {
+    var ll = boundary.ring.map(function (c) { return G.m2ll(c[0], c[1]); });
+    L.polygon(ll, { fill: false, color: '#fff6d9', weight: 4, opacity: 0.85, interactive: false }).addTo(groups.boundary);                          // cream halo so the line reads on every background
+    L.polygon(ll, { fill: false, color: '#b5402a', weight: 1.5, opacity: 1, dashArray: '8 6', className: 'boundary-line', interactive: false }).addTo(groups.boundary);
+    // the edge of the mapped coverage zone: a firm thin line in both views (scrolling past it is not possible, see clampToZone)
+    L.rectangle(zoneBounds, { fill: false, color: '#2f6f9f', weight: 2, opacity: 0.9, className: 'zone-line', interactive: false }).addTo(groups.zone);
+    // at whole-property zoom the detailed map is a small patch: mark it with a tappable box that jumps to the close-up
+    var fb = G.bounds(), box = L.rectangle(fb, { color: '#fff6d9', weight: 2, dashArray: '6 6', fill: true, fillColor: '#000', fillOpacity: 0, className: 'frame-box' }).addTo(groups.frame);      // no fill (the art shows undimmed); fill-opacity 0 still counts as painted, so the whole box stays tappable
+    box.on('click', function (e) { L.DomEvent.stopPropagation(e); goClose(); });
+    frameLabel = L.marker(L.latLngBounds(fb).getCenter(), { icon: L.divIcon({ className: 'frame-label', html: '<span></span>', iconSize: [0, 0] }), interactive: false, keyboard: false }).addTo(groups.frame);
+  }
+  function insideProperty(x, y) {      // ray casting on the outline (map metres)
+    var r = boundary.ring, inside = false;
+    for (var i = 0, j = r.length - 1; i < r.length; j = i++) {
+      if (((r[i][1] > y) !== (r[j][1] > y)) && (x < (r[j][0] - r[i][0]) * (y - r[i][1]) / (r[j][1] - r[i][1]) + r[i][0])) inside = !inside;
+    }
+    return inside;
+  }
   function buildTerrain() {
     Object.keys(pampas).forEach(function (k) {
       L.polygon(polyLatLngs(pampas[k].polygon), { stroke: false, fillColor: rampCSS(tFor(pampas[k].elev.mean)), fillOpacity: 0.85, interactive: false, renderer: tintRenderer }).addTo(groups.tint);
@@ -170,15 +252,20 @@
     terrain.minor.forEach(function (m) { line(m.lines, { color: '#6b3f1d', weight: 0.8, opacity: 0.4, interactive: false }, groups.contourMinor); });
   }
   var minorWanted = false;
-  function applyMinorContours(wanted) { minorWanted = wanted; if (!map) return; if (wanted && state.layers.terrain) groups.contourMinor.addTo(map); else map.removeLayer(groups.contourMinor); }
+  function curView() { return map.getContainer().classList.contains('wide') ? 'property' : 'pampa'; }
+  function applyMinorContours(wanted) { minorWanted = wanted; if (!map) return; if (wanted && state.terrain.pampa && curView() === 'pampa') groups.contourMinor.addTo(map); else map.removeLayer(groups.contourMinor); }
   function applyTerrain() {
-    var on = state.layers.terrain;
-    ['tint', 'contourMajor', 'contourLabels'].forEach(function (n) { if (on) groups[n].addTo(map); else map.removeLayer(groups[n]); });
+    var v = curView(), on = state.terrain[v], pampaOn = on && v === 'pampa';
+    ['tint', 'contourMajor', 'contourLabels'].forEach(function (n) { if (pampaOn) groups[n].addTo(map); else map.removeLayer(groups[n]); });      // pampa view: close-up contours + height tint + legend
+    ['wideContours', 'wideLabels'].forEach(function (n) { if (on) groups[n].addTo(map); else map.removeLayer(groups[n]); });
+    if (on && v === 'property') groups.wideContoursIn.addTo(map); else map.removeLayer(groups.wideContoursIn);      // across the pampa area too in the property view; the pampa view shows the close-up contours there                        // 50 / 100 m contours across the zone (outside the close-up frame) in either view when terrain is on
     applyMinorContours(minorWanted);
-    $('legend').hidden = !on;
+    $('legend').hidden = !pampaOn;
     $('btn-terrain').classList.toggle('on', on);
     $('lg-low').textContent = terrain.range[0] + ' m'; $('lg-high').textContent = terrain.range[1] + ' m';
     $('legend-bar').style.background = 'linear-gradient(to right,' + rampCSS(0) + ',' + rampCSS(0.5) + ',' + rampCSS(1) + ')';
+    groups.waters.addTo(map);      // rivers and lakes outside the close-up frame: always, in both views, no toggle
+    groups.watersIn.addTo(map);      // the user-drawn rivers' parts inside the frame (the art does not draw them) in both views, so they connect with the outside rivers
   }
   function elevText(elev, rel) {      // 'N m above/below the average cleared ground (248 m)'
     var d = Math.round(elev - terrain.cleared_mean), ad = Math.abs(d), nb = '\u00a0', avg = ' (' + terrain.cleared_mean + nb + t('m') + ')';
@@ -186,11 +273,164 @@
     return ad + nb + t('m') + ' ' + t(d > 0 ? 'above_avg' : 'below_avg') + avg;
   }
 
+  /* ---------- compass (north is always up) + scale bar ---------- */
+  var SCALE_STEPS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
+  function pxPerMetre() { return meta.px_per_m * Math.pow(2, map.getZoom() - meta.zmax); }
+  function updateScale() {
+    if (!map) return;
+    var ppm = pxPerMetre(), maxPx = 110, best = SCALE_STEPS[0];
+    SCALE_STEPS.forEach(function (m) { if (m * ppm <= maxPx) best = m; });
+    $('scale-bar').style.width = Math.round(best * ppm) + 'px';
+    $('scale-label').textContent = best >= 1000 ? (best / 1000) + ' km' : best + ' ' + t('m');
+  }
+
+  /* ---------- mini-map: the whole property outline with a box showing the current view (orientation only) ---------- */
+  var MM = null;
+  function buildMiniMap() {
+    var bd = boundary.bounds, pad = 300, W = 120, H = 90;      // a little context around the property so nearby rivers show
+    var w = bd[2] - bd[0] + 2 * pad, h = bd[3] - bd[1] + 2 * pad;
+    if (w / h < W / H) w = h * W / H; else h = w * H / W;
+    var cx = (bd[0] + bd[2]) / 2, cy = (bd[1] + bd[3]) / 2, k = W / w;
+    var X = function (x) { return W / 2 + (x - cx) * k; }, Y = function (y) { return H / 2 - (y - cy) * k; };
+    MM = { X: X, Y: Y, W: W, H: H };
+    var pts = function (ring) { return ring.map(function (c) { return X(c[0]).toFixed(1) + ',' + Y(c[1]).toFixed(1); }).join(' '); };
+    ['mm-prop', 'mm-rim', 'mm-line'].forEach(function (id) { $(id).setAttribute('points', pts(boundary.ring)); });
+    var ns = 'http://www.w3.org/2000/svg';
+    rivers.lines.forEach(function (r) { var l = document.createElementNS(ns, 'polyline'); l.setAttribute('points', pts(r.pts)); l.setAttribute('stroke-width', r.kind === 'river' ? 1.1 : 0.6); $('mm-rivers').appendChild(l); });
+    Object.keys(pampas).forEach(function (k2) { pampas[k2].polygon.forEach(function (rings) { var g = document.createElementNS(ns, 'polygon'); g.setAttribute('points', pts(rings[0])); $('mm-patches').appendChild(g); }); });
+    updateMiniMap();
+  }
+  function updateMiniMap() {
+    if (!MM) return;
+    var b = map.getBounds(), sw = G.ll2m(b.getSouth(), b.getWest()), ne = G.ll2m(b.getNorth(), b.getEast());
+    var x0 = Math.max(0, MM.X(sw[0])), x1 = Math.min(MM.W, MM.X(ne[0])), y0 = Math.max(0, MM.Y(ne[1])), y1 = Math.min(MM.H, MM.Y(sw[1]));
+    var v = $('mm-view'); v.setAttribute('x', x0); v.setAttribute('y', y0); v.setAttribute('width', Math.max(2, x1 - x0)); v.setAttribute('height', Math.max(2, y1 - y0));
+  }
+
+  function buildNames() {      // property-view labels: rivers, summits, the owner's own names; both languages are in the markup, CSS shows the current one
+    placeNames.places.forEach(function (p) {
+      var ele = p.ele ? '<b>\u25B2 ' + p.ele.toLocaleString('en-US') + ' m</b>' : '', name = p.en || p.es ? '<i class="en">' + esc(p.en) + '</i><i class="es">' + esc(p.es) + '</i>' : '';
+      L.marker(G.m2ll(p.x, p.y), { icon: L.divIcon({ className: 'place-label place-' + p.kind, html: '<span>' + name + ele + '</span>', iconSize: [0, 0] }), interactive: false, keyboard: false }).addTo(groups.names);
+    });
+  }
+
+  function buildRelief() {      // one image over the whole coverage zone (decrypted in the browser when the build is encrypted)
+    var b = reliefInfo.bounds, url = 'data/relief.webp' + (Vault.enc ? '.enc' : '');
+    (Vault.enc ? Vault.blobURL(url) : Promise.resolve(url)).then(function (u) {
+      reliefLayer = L.imageOverlay(u, [G.m2ll(b[0], b[1]), G.m2ll(b[2], b[3])], { pane: 'relief', interactive: false, className: 'relief-img', opacity: map.getContainer().classList.contains('wide') ? 1 : 0.6 }).addTo(map);
+    }).catch(function () { /* no relief (e.g. offline before it was cached): the map still works */ });
+  }
+
+  function placeFrameLabel() {      // the 'Pampa view' label sits just below the box on screen (tilt included), not on top of the art
+    if (!frameLabel || !map) return;
+    var fb = L.latLngBounds(G.bounds()), cs = [fb.getNorthWest(), fb.getNorthEast(), fb.getSouthEast(), fb.getSouthWest()].map(function (c) { return map.latLngToContainerPoint(c); });
+    var maxY = Math.max.apply(null, cs.map(function (p) { return p.y; })), low = cs.filter(function (p) { return p.y > maxY - 4; });
+    var x = low.reduce(function (a, p) { return a + p.x; }, 0) / low.length;
+    frameLabel.setLatLng(map.containerPointToLatLng([x, maxY + 16]));
+  }
+
+  function updateView() {      // the clicker shows which view you are in: close-up (the mapped area) or the whole property
+    if (!map) return;
+    var wide = map.getZoom() < closeFitZoom - 0.45;
+    $('view-close').classList.toggle('on', !wide); $('view-property').classList.toggle('on', wide);
+    map.getContainer().classList.toggle('wide', wide); document.body.classList.toggle('propview', wide); $('minimap').hidden = wide;      // whole-property view: hide badges/pills/bubbles and the mode bar; the map itself is the overview
+    $('tilt-btn').hidden = !wide; applyBoundary(); applyTerrain();
+    if (wide) groups.names.addTo(map); else map.removeLayer(groups.names);      // names: property view only
+    if (reliefLayer) reliefLayer.setOpacity(wide ? 1 : 0.6);      // full strength in the property view, quieter around the close-up
+    if (wide) { groups.frame.addTo(map); placeFrameLabel(); } else map.removeLayer(groups.frame);
+    var fl = document.querySelector('.frame-label span'); if (fl) fl.textContent = t('view_close');
+    if (!wide && !transitioning && Math.abs(normDeg(map.getBearing())) > 0.5) tweenBearing(0, 300);      // zooming back into the pampa view stands the map upright again
+  }
+
+  /* ---------- property view: fit the strip to the screen, tilting the map when that helps ---------- */
+  var PAD = { l: 12, r: 76, t: 100, b: 24 };      // px kept clear for the title (top) and the button column (right)
+  function normDeg(a) { return ((a + 180) % 360 + 360) % 360 - 180; }
+  function fitFor(th, vw, vh) {      // scale/centre/zoom that fit the whole property on a vw x vh screen when the map is turned clockwise by th degrees
+    var r = th * Math.PI / 180, c = Math.cos(r), s = Math.sin(r), mnx = 1e9, mxx = -1e9, mny = 1e9, mxy = -1e9;
+    boundary.ring.forEach(function (p) { var sx = p[0] * c + p[1] * s, sy = -p[0] * s + p[1] * c; mnx = Math.min(mnx, sx); mxx = Math.max(mxx, sx); mny = Math.min(mny, sy); mxy = Math.max(mxy, sy); });
+    var aw = vw - PAD.l - PAD.r, ah = vh - PAD.t - PAD.b, sc = Math.min(aw / (mxx - mnx), ah / (mxy - mny));
+    var dx = (PAD.l + aw / 2) - vw / 2, dy = (PAD.t + ah / 2) - vh / 2;      // where the content sits relative to the screen centre (px, y down)
+    var csx = (mnx + mxx) / 2 - dx / sc, csy = (mny + mxy) / 2 + dy / sc;      // screen-centre in the turned frame, then back to map metres
+    var z = meta.zmax + Math.log(sc / meta.px_per_m) / Math.LN2;
+    return { scale: sc, cx: csx * c - csy * s, cy: csx * s + csy * c, z: Math.floor(z * 4) / 4 };
+  }
+  function tiltAngles() {      // the two useful tilts: strip upright (tall screens) or strip flat (wide screens)
+    var a = boundary.axis_deg, up = a <= 90 ? -a : 180 - a;
+    return { up: up, flat: up <= 0 ? up + 90 : up - 90 };
+  }
+  function chooseBearing(mode, vw, vh) {
+    if (mode === 'north') return 0;
+    var t2 = tiltAngles(), s0 = fitFor(0, vw, vh).scale, sU = fitFor(t2.up, vw, vh).scale, sF = fitFor(t2.flat, vw, vh).scale;
+    var best = sU >= sF ? t2.up : t2.flat, gain = Math.max(sU, sF) / s0;
+    return mode === 'tilted' || gain >= 1.15 ? best : 0;      // auto: tilt only when it makes the property at least 15% bigger
+  }
+  function tweenBearing(target, ms, done) {
+    var from = normDeg(map.getBearing()), d = normDeg(normDeg(target) - from), t0 = null;
+    if (Math.abs(d) < 0.5) { map.setBearing(normDeg(target)); if (done) done(); return; }
+    function step(ts) {
+      if (t0 === null) t0 = ts;
+      var k = Math.min(1, (ts - t0) / ms), e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+      map.setBearing(from + d * e);
+      if (k < 1) requestAnimationFrame(step); else if (done) done();
+    }
+    requestAnimationFrame(step);
+  }
+  function beginTransition() { transitioning = true; clearTimeout(transTimer); transTimer = setTimeout(function () { transitioning = false; updateView(); }, 4000); }
+  function endTransition() { transitioning = false; clearTimeout(transTimer); updateView(); updateMinZoom(); }
+  function enterProperty() {
+    var sz = map.getSize(), th = chooseBearing(state.tilt, sz.x, sz.y), fit = fitFor(th, sz.x, sz.y);
+    beginTransition(); updateMinZoom(th);
+    tweenBearing(th, 350, function () { map.once('moveend', endTransition); map.flyTo(G.m2ll(fit.cx, fit.cy), fit.z, { duration: 0.9 }); });
+  }
+  function goClose() {
+    beginTransition(); updateMinZoom(0);
+    tweenBearing(0, 300, function () { map.once('moveend', endTransition); map.flyToBounds(G.bounds(), { duration: 0.7 }); });
+  }
+  function viewBoxM() {      // bounding box (metres) of the ground the screen shows now, rotation included
+    var sz = map.getSize(), xs = [], ys = [];
+    [[0, 0], [sz.x, 0], [sz.x, sz.y], [0, sz.y]].forEach(function (p) { var l = map.containerPointToLatLng(L.point(p)), m = G.ll2m(l.lat, l.lng); xs.push(m[0]); ys.push(m[1]); });
+    return { x0: Math.min.apply(null, xs), x1: Math.max.apply(null, xs), y0: Math.min.apply(null, ys), y1: Math.max.apply(null, ys) };
+  }
+  function clampToZone() {      // hard limit: the screen never shows ground outside the coverage zone (a view larger than the zone is centred on it)
+    if (!map || !map._loaded || clamping || transitioning || !boundary) return;
+    var e = 1.5 / pxPerMetre(), z = [boundary.zone[0] + e, boundary.zone[1] + e, boundary.zone[2] - e, boundary.zone[3] - e], v = viewBoxM(), dx = 0, dy = 0;      // aim 1.5 px inside: the map pane snaps to whole pixels
+    if (v.x1 - v.x0 >= z[2] - z[0]) dx = (z[0] + z[2]) / 2 - (v.x0 + v.x1) / 2; else if (v.x0 < z[0]) dx = z[0] - v.x0; else if (v.x1 > z[2]) dx = z[2] - v.x1;
+    if (v.y1 - v.y0 >= z[3] - z[1]) dy = (z[1] + z[3]) / 2 - (v.y0 + v.y1) / 2; else if (v.y0 < z[1]) dy = z[1] - v.y0; else if (v.y1 > z[3]) dy = z[3] - v.y1;
+    if (Math.abs(dx) < 0.05 && Math.abs(dy) < 0.05) return;
+    var c = map.getCenter(), m = G.ll2m(c.lat, c.lng);
+    clamping = true; map.setView(G.m2ll(m[0] + dx, m[1] + dy), map.getZoom(), { animate: false }); clamping = false;
+  }
+  function updateMinZoom(bearing) {      // zoom out only until the (rotated) screen fits inside the coverage zone
+    var sz = map.getSize(), z = boundary.zone, th = (bearing === undefined ? map.getBearing() : bearing) * Math.PI / 180, c = Math.abs(Math.cos(th)), s = Math.abs(Math.sin(th));
+    var sc = Math.max((sz.x * c + sz.y * s) / (z[2] - z[0]), (sz.x * s + sz.y * c) / (z[3] - z[1]));      // px per metre at which the rotated screen exactly spans the zone
+    var mz = meta.zmax + Math.log(sc / meta.px_per_m) / Math.LN2 + 0.01;
+    map.options.minZoom = mz; if (map._loaded && map.getZoom() < mz) map.setView(map.getCenter(), mz, { animate: false });      // not setMinZoom: it starts an animated zoom, and the clamp below would read the stale zoom      // +0.01 zoom: a few pixels of slack so the screen is strictly smaller than the zone
+    clampToZone();
+  }
+  function onResize() {
+    updateMinZoom();
+    var sz = map.getSize(), portrait = sz.y >= sz.x;
+    if (lastPortrait !== undefined && portrait !== lastPortrait && map.getContainer().classList.contains('wide') && !transitioning) enterProperty();      // device turned: choose the tilt again
+    lastPortrait = portrait;
+  }
+  function paintTilt() { $('tilt-btn').textContent = '↻ ' + t({ auto: 'tilt_auto', north: 'tilt_north', tilted: 'tilt_tilted' }[state.tilt]); }
+
+  var settleTimer;
+  function settleTiles(force) {
+    /* Keep ONLY the tile set of the current mode. It always reads state.mode, so callbacks left over from earlier quick switches can never remove the set that is
+       showing now (that used to leave a blank map with only the overlays drawn). The old set stays until the current one is ready, unless `force` (safety timer). */
+    var cur = tiles[state.mode];
+    if (!map.hasLayer(cur)) { cur.addTo(map); cur.setZIndex(2); return; }
+    if (!force && !cur.__ready) return;
+    Object.keys(tiles).forEach(function (n) { if (tiles[n] !== cur && map.hasLayer(tiles[n])) map.removeLayer(tiles[n]); });
+  }
+
   /* ---------- modes / layers / language ---------- */
   function applyMode() {
     var next = tiles[state.mode];       // add the new set first, drop the old ones once it has loaded (no flash)
-    var dropOthers = function () { Object.keys(tiles).forEach(function (n) { if (tiles[n] !== next && map.hasLayer(tiles[n])) map.removeLayer(tiles[n]); }); };
-    if (!map.hasLayer(next)) { next.addTo(map); next.setZIndex(2); next.once('load', dropOthers); setTimeout(dropOthers, 15000); } else dropOthers();      // old set stays until the new one has loaded (15 s safety net)
+    if (!map.hasLayer(next)) { next.addTo(map); next.setZIndex(2); }
+    clearTimeout(settleTimer); settleTimer = setTimeout(function () { settleTiles(true); }, window.__TILE_SAFETY_MS || 15000);      // safety net if the new set never reports 'load'
+    settleTiles(false);
     sitePills.forEach(function (s) {
       var show = s.kind === 'label' || s.kind === 'base' || (s.kind === 'existing' && state.mode !== 'bare') || (s.kind === 'prospective' && state.mode === 'prospective');
       if (show) s.grp.addTo(groups.sites); else groups.sites.removeLayer(s.grp);
@@ -199,11 +439,15 @@
     document.querySelectorAll('#modes button').forEach(function (b) { b.classList.toggle('on', b.dataset.mode === state.mode); });
     applyLayers();
   }
+  function applyBoundary() {      // the property outline is a pampa-view toggle; in the property view it is always shown
+    if (state.layers.boundary || (map.getContainer().classList.contains('wide'))) groups.boundary.addTo(map); else map.removeLayer(groups.boundary);
+  }
   function applyLayers() {
     var c = map.getContainer();
     c.classList.toggle('nolabels', !state.layers.labels);
-    c.classList.toggle('nogolf', !state.layers.golf);
     if (state.layers.quests) groups.quests.addTo(map); else map.removeLayer(groups.quests);
+    $('btn-quests').classList.toggle('on', state.layers.quests);
+    applyBoundary();
     applyTerrain();
   }
   function applyLang() {
@@ -215,22 +459,28 @@
     sitePills.forEach(function (s) { s.pill.setIcon(pillIcon(s.poi, s.kind)); });
     updateOfflineText();
     $('legend-title').textContent = t('terrain_legend'); $('legend-note').textContent = t('terrain_note');
+    paintTilt(); $('compass').title = t('compass'); $('view-close').textContent = t('view_close'); $('view-property').textContent = t('view_property'); updateScale(); updateView();
     renderView();
   }
 
   function wireUI() {
     $('lang').onclick = function () { state.lang = state.lang === 'en' ? 'es' : 'en'; store.set('lang', state.lang); applyLang(); };
     document.querySelectorAll('#modes button').forEach(function (b) {
-      b.onclick = function () { state.mode = b.dataset.mode; store.set('mode', state.mode); applyMode(); toast(t(state.mode) + ': ' + t(state.mode + '_sub'), 1800); };
+      b.onclick = function () { state.mode = b.dataset.mode; applyMode(); toast(t(state.mode) + ': ' + t(state.mode + '_sub'), 1800); };
     });
-    $('btn-quests').onclick = function () { showView({ type: 'quests' }); };
+    $('btn-quests').onclick = function () { state.layers.quests = !state.layers.quests; store.set('layers2', state.layers); applyLayers(); toast(t('quests') + ': ' + (state.layers.quests ? t('on') : t('off')), 1500); };
     $('btn-places').onclick = function () { showView({ type: 'places' }); };
     $('btn-layers').onclick = function () { showView({ type: 'layers' }); };
     $('btn-locate').onclick = toggleGPS;
-    $('btn-terrain').onclick = function () { state.layers.terrain = !state.layers.terrain; store.set('layers', state.layers); applyTerrain(); toast(t('terrain') + ': ' + (state.layers.terrain ? t('on') : t('off')), 1500); };
+    $('compass').onclick = goClose;      // tap the compass: back to the close-up map
+    $('view-close').onclick = goClose;
+    $('view-property').onclick = enterProperty;
+    $('tilt-btn').onclick = function () { state.tilt = { auto: 'north', north: 'tilted', tilted: 'auto' }[state.tilt]; paintTilt(); enterProperty(); };
+    $('btn-terrain').onclick = function () { var v = curView(); state.terrain[v] = !state.terrain[v]; applyTerrain(); toast(t('terrain') + ': ' + (state.terrain[v] ? t('on') : t('off')), 1500); };
     $('sheet-close').onclick = closeSheet;
     $('offline').onclick = function () { askSW({ type: 'cache-all' }); };
     window.addEventListener('hashchange', openFromHash);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden && map) settleTiles(false); });      // self-heal when returning to the app/tab
   }
 
   /* ---------- selection + bottom sheet ---------- */
@@ -243,7 +493,10 @@
   function selectQuest(id) { showView({ type: 'quest', id: id }); }
   function flyToBounds(bnds, maxZ) { map.flyToBounds(bnds, { padding: [40, 40], maxZoom: maxZ || meta.zmax + 1, duration: 0.6, paddingBottomRight: [40, Math.round(window.innerHeight * 0.45)] }); }
 
-  function showView(v, nofly) { state.view = v; renderView(); if (!nofly) focusView(v); }
+  function showView(v, nofly) {
+    if (v.type === 'quest' && !state.layers.quests) { state.layers.quests = true; store.set('layers2', state.layers); applyLayers(); }      // an opened action item must be visible
+    state.view = v; renderView(); if (!nofly) focusView(v);
+  }
   function focusView(v) {
     if (v.type === 'pampa') { flyToBounds(pampaPolys[v.id].getBounds()); setHash('pampa/' + v.id); }
     else if (v.type === 'quest') { flyToBounds(questPolys[v.id].getBounds(), meta.zmax); setHash('quest/' + v.id); }
@@ -278,7 +531,7 @@
   }
   function bindSheet(el) {
     el.querySelectorAll('[data-go]').forEach(function (b) { b.onclick = function () { var p = b.dataset.go.split(':'); showView({ type: p[0], id: p[0] === 'hole' ? +p[1] : p[1] }); }; });
-    el.querySelectorAll('[data-chk]').forEach(function (c) { c.onchange = function () { state.layers[c.dataset.chk] = c.checked; store.set('layers', state.layers); applyLayers(); }; });
+    el.querySelectorAll('[data-chk]').forEach(function (c) { c.onchange = function () { state.layers[c.dataset.chk] = c.checked; store.set('layers2', state.layers); applyLayers(); }; });
     var s = el.querySelector('.search');
     if (s) s.oninput = function () { el.querySelector('#plist').innerHTML = placesList(s.value); bindSheet(el.querySelector('#plist')); };
   }
@@ -319,7 +572,8 @@
   }
   function viewLayers() {
     var row = function (k, label) { return '<label class="check"><input type="checkbox" data-chk="' + k + '"' + (state.layers[k] ? ' checked' : '') + '>' + t(label) + '</label>'; };
-    return '<h2>🗺️ ' + t('layers') + '</h2>' + row('terrain', 'show_terrain') + row('quests', 'show_quests') + row('labels', 'show_labels') + row('golf', 'show_golf');
+    var prop = curView() === 'property';      // property view: rivers, lakes and the outline are fixed, contours have their own button, hiking trails will be the only toggle here
+    return '<h2>🗺️ ' + t('layers') + '</h2>' + (prop ? '' : row('boundary', 'show_boundary') + row('labels', 'show_labels')) + '<p class="muted">' + t(prop ? 'layers_note_property' : 'layers_note') + '</p><p class="muted" style="font-size:12px">' + t('credits') + '</p>';
   }
   function viewHole(n) {
     var h = golf.holes[n - 1];
@@ -353,13 +607,14 @@
     $('btn-locate').classList.add('on');
     gps = { first: true, dot: null, acc: null, id: navigator.geolocation.watchPosition(onFix, onGPSError, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 }) };
   }
-  function stopGPS() { navigator.geolocation.clearWatch(gps.id); groups.gps.clearLayers(); gps = null; $('btn-locate').classList.remove('on'); }
+  function stopGPS() { $('mm-gps').setAttribute('hidden', ''); navigator.geolocation.clearWatch(gps.id); groups.gps.clearLayers(); gps = null; $('btn-locate').classList.remove('on'); }
   function onFix(pos) {
     if (!gps) return;
     var m = G.lonlat2m(pos.coords.longitude, pos.coords.latitude);
     groups.gps.clearLayers();
-    if (!G.inside(m[0], m[1], 30)) { if (gps.first) toast(t('gps_outside'), 3500); gps.first = false; return; }
+    if (!G.inside(m[0], m[1], 30) && !insideProperty(m[0], m[1])) { if (gps.first) toast(t('gps_outside'), 3500); gps.first = false; return; }
     var ll = G.m2ll(m[0], m[1]);
+    if (MM) { var gd = $('mm-gps'); gd.setAttribute('cx', MM.X(m[0])); gd.setAttribute('cy', MM.Y(m[1])); gd.removeAttribute('hidden'); }
     L.circle(ll, { radius: G.mToUnits(pos.coords.accuracy), stroke: false, fillColor: '#2f8fd8', fillOpacity: 0.15, interactive: false }).addTo(groups.gps);
     L.marker(ll, { icon: L.divIcon({ className: '', html: '<div class="gps-dot"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }), interactive: false, keyboard: false }).addTo(groups.gps);
     if (gps.first) { map.flyTo(ll, Math.max(map.getZoom(), meta.zmax - 0.5), { duration: 0.8 }); toast(t('accuracy') + ' ±' + Math.round(pos.coords.accuracy) + ' ' + t('m'), 2200); gps.first = false; }
