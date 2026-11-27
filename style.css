@@ -27,6 +27,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 /* floating buttons */
 #fabs { position: fixed; z-index: 1000; right: calc(var(--safe-r) + 12px); bottom: calc(var(--safe-b) + 84px); display: flex; flex-direction: column; gap: 10px; }
 .fab { position: relative; width: 48px; height: 48px; border-radius: 50%; border: 2px solid var(--wood-dk); background: var(--cream); font-size: 22px; line-height: 1; box-shadow: 0 4px 0 var(--wood-dk), 0 8px 14px rgba(0,0,0,.25); }
+.fab { display: grid; place-items: center; padding: 0; }      /* centre the icon by the box, not by the text line (the real iPhone drew the emoji about 12 px right of centre) */
+.fab .ico { display: block; width: 30px; height: 30px; line-height: 30px; text-align: center; font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }      /* name the emoji font so no fallback from the rounded UI font is involved */
 .fab:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--wood-dk); }
 .fab.on { background: #cfeaff; border-color: #1b5e96; box-shadow: 0 4px 0 #1b5e96; }
 .badge-count { position: absolute; top: -6px; right: -6px; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 11px; background: var(--red); color: #fff; font-size: 12px; font-weight: 900; display: grid; place-items: center; border: 2px solid #fff; }
