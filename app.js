@@ -120,7 +120,7 @@
     var zoomClass = function () { map.getContainer().classList.toggle('far', map.getZoom() < farZoom); applyMinorContours(map.getZoom() >= minorZoom); };
     map.on('zoomend', zoomClass); zoomClass();
     map.on('zoom', updateScale); updateScale();
-    map.on('move zoom', clampToZone); map.on('moveend zoomend', function () { updateMinZoom(); }); map.on('zoomend', updateView); map.on('zoomend', restyleWaters); map.on('zoomend', restyleFootpaths); map.on('zoomend', sizeHits); map.on('resize', onResize); lastPortrait = map.getSize().y >= map.getSize().x; updateView();
+    limitMapMoves(); map.on('move zoom', clampToZone); map.on('moveend zoomend', function () { updateMinZoom(); }); map.on('zoomend', updateView); map.on('zoomend', restyleWaters); map.on('zoomend', restyleFootpaths); map.on('zoomend', sizeHits); map.on('resize', onResize); lastPortrait = map.getSize().y >= map.getSize().x; updateView();
     map.on('rotate', function () { var br = map.getBearing(), sv = document.querySelector('#compass svg'); if (sv) sv.style.transform = 'rotate(' + br + 'deg)'; });      // the needle keeps pointing at true north
     buildMiniMap(); map.on('move zoom', updateMiniMap);
     map.on('click', function () { closeSheet(); });
@@ -513,8 +513,27 @@
     [[0, 0], [sz.x, 0], [sz.x, sz.y], [0, sz.y]].forEach(function (p) { var l = map.containerPointToLatLng(L.point(p)), m = G.ll2m(l.lat, l.lng); xs.push(m[0]); ys.push(m[1]); });
     return { x0: Math.min.apply(null, xs), x1: Math.max.apply(null, xs), y0: Math.min.apply(null, ys), y1: Math.max.apply(null, ys) };
   }
+  function clampCenter(c, zoom) {      // the nearest centre (for this zoom and the current turn) whose screen stays inside the coverage zone; a screen as big as the zone is centred on it
+    var sz = map.getSize(), th = map.getBearing() * Math.PI / 180, cs = Math.abs(Math.cos(th)), sn = Math.abs(Math.sin(th)), ppm = meta.px_per_m * Math.pow(2, zoom - meta.zmax), e = 1.5 / ppm, z = boundary.zone;
+    var hx = (sz.x * cs + sz.y * sn) / 2 / ppm, hy = (sz.x * sn + sz.y * cs) / 2 / ppm, m = G.ll2m(c.lat, c.lng);
+    var lim = function (v, lo, hi, h) { return h >= (hi - lo) / 2 - e ? (lo + hi) / 2 : Math.min(Math.max(v, lo + e + h), hi - e - h); };
+    return L.latLng(G.m2ll(lim(m[0], z[0], z[2], hx), lim(m[1], z[1], z[3], hy)));
+  }
+  function limitMapMoves() {      // every move Leaflet makes (a pinch, a wheel zoom, a fly) is cut back to the zone BEFORE it is applied; the old after-the-fact setView restarted every layer on each frame of a pinch at the zoom-out limit
+    var move0 = map._move;
+    map._move = function (center, zoom, data, supress) {
+      if (boundary && center && !clamping && !transitioning && this._loaded) center = clampCenter(center, zoom === undefined ? this._zoom : zoom);
+      return move0.call(this, center, zoom, data, supress);
+    };
+    var anim0 = map._animateZoom;      // the zoom that eases in when the fingers lift starts from the pinch's own (unclamped) centre
+    map._animateZoom = function (center, zoom, startAnim, noUpdate) {
+      if (boundary && center && !clamping && !transitioning && this._loaded) center = clampCenter(center, zoom);
+      return anim0.call(this, center, zoom, startAnim, noUpdate);
+    };
+  }
   function clampToZone() {      // hard limit: the screen never shows ground outside the coverage zone (a view larger than the zone is centred on it)
     if (!map || !map._loaded || clamping || transitioning || !boundary) return;
+    var tg = map.touchGestures; if (tg && (tg._zooming || tg._rotating)) return;      // mid-pinch: limitMapMoves already keeps every frame inside the zone; the final position is settled when the fingers lift (zoomend)
     var e = 1.5 / pxPerMetre(), z = [boundary.zone[0] + e, boundary.zone[1] + e, boundary.zone[2] - e, boundary.zone[3] - e], v = viewBoxM(), dx = 0, dy = 0;      // aim 1.5 px inside: the map pane snaps to whole pixels
     if (v.x1 - v.x0 >= z[2] - z[0]) dx = (z[0] + z[2]) / 2 - (v.x0 + v.x1) / 2; else if (v.x0 < z[0]) dx = z[0] - v.x0; else if (v.x1 > z[2]) dx = z[2] - v.x1;
     if (v.y1 - v.y0 >= z[3] - z[1]) dy = (z[1] + z[3]) / 2 - (v.y0 + v.y1) / 2; else if (v.y0 < z[1]) dy = z[1] - v.y0; else if (v.y1 > z[3]) dy = z[3] - v.y1;
