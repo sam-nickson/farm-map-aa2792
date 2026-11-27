@@ -5,7 +5,10 @@
   P('app-start');
   var STR = I18N.STR;
   var EMOJI = { waterfall: '💦', fishing: '🎣', dunny: '🚽', camp: '⛺', vista: '🔭', tower_m: '🐗', tower_n: '🐗', intake_falls: '💦', hangar: '🛩️',
-    residence: '🏡', greenhouse: '🌱', orchard: '🍎', tennis: '🎾', solar: '☀️', battery: '🔋', hydro: '⚡', runway: '🛬', pond: '🦆' };
+    residence: '🏡', greenhouse: '🌱', orchard: '🍎', tennis: '🎾', solar: '☀️', battery: '🔋', hydro: '⚡', runway: '🛬', pond: '', hot_spring: '♨️', raft_start: '🚣' };
+  var ICONS = {      // site icons for places outside the art (no sprite there): drawn here; the raft carries a small black arrow that points downstream (rotated by the site's heading and the map's turn)
+    hot_spring: '<svg viewBox="0 0 48 48"><g fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round"><path d="M15 21c-3-4 3-6 0-10M24 20c-3-4 3-6 0-11M33 21c-3-4 3-6 0-10"/></g><g fill="none" stroke="#9a8f86" stroke-width="1.2" stroke-linecap="round"><path d="M15 21c-3-4 3-6 0-10M24 20c-3-4 3-6 0-11M33 21c-3-4 3-6 0-10"/></g><ellipse cx="24" cy="34" rx="20" ry="10" fill="#8b7b6b" stroke="#5c4a3a" stroke-width="1.6"/><ellipse cx="24" cy="33" rx="15.5" ry="7" fill="#7fd6e8" stroke="#3a8fa8" stroke-width="1.2"/><path d="M14 33c3-2 6-2 9 0" stroke="#fff" stroke-width="1.6" fill="none" stroke-linecap="round"/><g fill="#a89887" stroke="#5c4a3a" stroke-width="1"><circle cx="7" cy="36" r="3"/><circle cx="12" cy="42" r="3.2"/><circle cx="24" cy="44" r="3"/><circle cx="37" cy="42" r="3.2"/><circle cx="42" cy="35" r="3"/></g></svg>',
+    raft: '<svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="22" fill="#7fd6e8" stroke="#3a8fa8" stroke-width="1.5"/><path d="M6 14c4-3 7 3 11 0s7 3 11 0 7 3 11 0M6 36c4-3 7 3 11 0s7 3 11 0 7 3 11 0" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round"/><g transform="rotate(-20 24 24)"><rect x="14" y="7" width="20" height="34" rx="10" fill="{gold}" stroke="#7a4a12" stroke-width="2"/><rect x="19" y="12" width="10" height="24" rx="5" fill="{cream}" stroke="#7a4a12" stroke-width="1.2"/><g fill="#6e4524" stroke="#fff" stroke-width="1"><circle cx="19" cy="17" r="3.2"/><circle cx="29" cy="17" r="3.2"/><circle cx="19" cy="29" r="3.2"/><circle cx="29" cy="29" r="3.2"/></g><path d="M9 14l8 6M39 14l-8 6" stroke="#6e4524" stroke-width="2" stroke-linecap="round"/></g><g class="raft-dir" transform="translate(37 37) rotate({heading}) scale(.7)"><path d="M0-6l4.6 5.4h-2.8v6.6h-3.6v-6.6h-2.8z" fill="#000" stroke="#fff" stroke-width=".9" stroke-linejoin="round"/></g></svg>' };
   var $ = function (id) { return document.getElementById(id); };
   var store = {
     get: function (k, d) { try { var v = localStorage.getItem('bandurrias.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
@@ -14,21 +17,21 @@
   var state = {
     lang: store.get('lang', (navigator.language || 'en').slice(0, 2) === 'es' ? 'es' : 'en'),
     mode: 'existing',      // always opens in Existing (the language choice is the only remembered preference besides layer toggles)
-    tilt: 'tilted',      // property view: 'tilted' (default: always the better tilt), 'auto' (tilt only if it helps >= 15%) or 'north' (north up)
+    tilt: null,      // property view: 'tilted' (always the better tilt), 'auto' (tilt only if it helps enough) or 'north' (north up); the default comes from config.json
     layers: Object.assign({ quests: true }, store.get('layers3', {})),      // action areas are ON by default (layers3: the old key held the earlier default 'off')
     trails: { pampa: false, property: true },      // Gaia trail per view (like the terrain): on in the property view, off in the pampa view; the 🥾 button toggles the current view
     terrain: { pampa: false, property: true },      // terrain (lines; + height tint in the pampa view) per view: off in the pampa view, on in the property view; the mountain button toggles the current view's
     view: null
   };
-  var clamping = false, trailData, canopyInfo, canopyLayer, placeNames, reliefInfo, reliefLayer, underRenderer, meta, pampas, pois, golf, quests, terrain, boundary, rivers, waters, wideContours, bbounds, closeFitZoom, zoneBounds, transitioning = false, transTimer, lastPortrait, G, map, tiles = {}, groups = {}, badgeMarkers = {}, tintRenderer, pampaPolys = {}, questPolys = {}, sitePills = [], gps = null;
+  var clamping = false, cfg, trailData, canopyInfo, canopyLayer, placeNames, reliefInfo, reliefLayer, underRenderer, meta, pampas, pois, golf, quests, terrain, boundary, rivers, waters, wideContours, bbounds, closeFitZoom, zoneBounds, transitioning = false, transTimer, lastPortrait, G, map, tiles = {}, groups = {}, badgeMarkers = {}, tintRenderer, pampaPolys = {}, questPolys = {}, sitePills = [], gps = null;
 
   var t = function (k) { return STR[state.lang][k] || STR.en[k] || k; };
   var nm = function (o) { return I18N.pick(o, state.lang); };
   var esc = function (s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
   function load() {
     P('data-request');
-    return Promise.all(['meta', 'pampas', 'pois', 'golf', 'quests', 'terrain', 'boundary', 'rivers', 'waters', 'contours_wide', 'relief', 'names', 'canopy', 'trails'].map(function (n) { return Vault.json('data/' + n + '.json'); })).then(function (d) {
-      meta = d[0]; pampas = d[1]; pois = d[2]; golf = d[3]; quests = d[4]; terrain = d[5]; boundary = d[6]; rivers = d[7]; waters = d[8]; wideContours = d[9]; reliefInfo = d[10]; placeNames = d[11]; canopyInfo = d[12]; trailData = d[13];
+    return Promise.all(['meta', 'pampas', 'pois', 'golf', 'quests', 'terrain', 'boundary', 'rivers', 'waters', 'contours_wide', 'relief', 'names', 'canopy', 'trails', 'config'].map(function (n) { return Vault.json('data/' + n + '.json'); })).then(function (d) {
+      meta = d[0]; pampas = d[1]; pois = d[2]; golf = d[3]; quests = d[4]; terrain = d[5]; boundary = d[6]; rivers = d[7]; waters = d[8]; wideContours = d[9]; reliefInfo = d[10]; placeNames = d[11]; canopyInfo = d[12]; trailData = d[13]; cfg = d[14]; state.tilt = cfg.tilt.default;
       P('data-loaded'); init(); P('init-done');
     }).catch(loadError);
   }
@@ -84,7 +87,7 @@
   function init() {
     G = Geo.make(meta);
     var b = G.bounds();
-    map = L.map('map', { crs: L.CRS.Simple, zoomControl: false, attributionControl: false, zoomSnap: 0.25, zoomDelta: 0.5, wheelPxPerZoomLevel: 90,
+    map = L.map('map', { crs: L.CRS.Simple, zoomControl: false, attributionControl: false, zoomSnap: cfg.zoom_snap, zoomDelta: 0.5, wheelPxPerZoomLevel: 90,
       maxZoom: meta.zmax + 1, inertia: true, bounceAtZoomLimits: false, tap: true,
       rotate: true, bearing: 0, touchRotate: false, shiftKeyRotate: false, rotateControl: false });      // rotation (leaflet-rotate) is driven by the app only: the property view tilts to fit the screen
     var fit = map.getBoundsZoom(b, false); closeFitZoom = fit;
@@ -106,17 +109,18 @@
     tintRenderer = L.svg({ pane: 'tint' });
     map.createPane('under', map._rotatePane); map.getPane('under').style.zIndex = 150; map.getPane('under').style.pointerEvents = 'none';      // below the art (tile pane 200): rivers / lakes / contours outside the frame show through the art's soft edge and never draw over it
     underRenderer = L.svg({ pane: 'under' });
+    map.createPane('sprites', map._rotatePane); map.getPane('sprites').style.zIndex = 410; map.getPane('sprites').style.pointerEvents = 'none';      // drawn icons of sites outside the art: like the art's sprites they sit in front of the footpaths and rivers; inside the rotating pane, so they turn with the map
     map.createPane('relief', map._rotatePane); map.getPane('relief').style.zIndex = 140; map.getPane('relief').style.pointerEvents = 'none';      // soft hillshade of the whole zone, below everything else (the art, rivers, contours)
     map.createPane('canopy', map._rotatePane); map.getPane('canopy').style.zIndex = 130; map.getPane('canopy').style.pointerEvents = 'none';      // forest cover for the rest of the property: below the relief shading (140), the rivers / contours (150) and the art (200)
     buildRelief(); buildCanopy();
-    ['boundary', 'zone', 'waters', 'watersIn', 'wideContours', 'wideContoursIn', 'wideContoursMid', 'wideLabelsMid', 'wideLabels', 'names', 'tint', 'contourMajor', 'contourMinor', 'contourLabels', 'pampas', 'golf', 'sites', 'badges', 'quests', 'trails', 'gps'].forEach(function (n) { groups[n] = L.layerGroup().addTo(map); });
-    buildBoundary(); buildWaters(); buildNames(); buildTrails(); buildTerrain(); buildPampas(); buildGolf(); buildSites(); buildQuests();
+    ['boundary', 'zone', 'waters', 'watersIn', 'wideContours', 'wideContoursIn', 'wideContoursMid', 'wideLabelsMid', 'wideLabels', 'names', 'tint', 'contourMajor', 'contourMinor', 'contourLabels', 'pampas', 'golf', 'sites', 'badges', 'quests', 'footpaths', 'trails', 'gps'].forEach(function (n) { groups[n] = L.layerGroup().addTo(map); });
+    buildBoundary(); buildWaters(); buildNames(); buildFootpaths(); buildTrails(); buildTerrain(); buildPampas(); buildGolf(); buildSites(); buildQuests();
     var farZoom = fit + 0.9;
     var minorZoom = fit + 0.6;      // 10 m contour lines appear from a normal working zoom (only if the terrain-lines layer is on)
     var zoomClass = function () { map.getContainer().classList.toggle('far', map.getZoom() < farZoom); applyMinorContours(map.getZoom() >= minorZoom); };
     map.on('zoomend', zoomClass); zoomClass();
     map.on('zoom', updateScale); updateScale();
-    map.on('move zoom', clampToZone); map.on('moveend zoomend', function () { updateMinZoom(); }); map.on('zoomend', updateView); map.on('zoomend', restyleWaters); map.on('resize', onResize); lastPortrait = map.getSize().y >= map.getSize().x; updateView();
+    map.on('move zoom', clampToZone); map.on('moveend zoomend', function () { updateMinZoom(); }); map.on('zoomend', updateView); map.on('zoomend', restyleWaters); map.on('zoomend', restyleFootpaths); map.on('zoomend', sizeHits); map.on('resize', onResize); lastPortrait = map.getSize().y >= map.getSize().x; updateView();
     map.on('rotate', function () { var br = map.getBearing(), sv = document.querySelector('#compass svg'); if (sv) sv.style.transform = 'rotate(' + br + 'deg)'; });      // the needle keeps pointing at true north
     buildMiniMap(); map.on('move zoom', updateMiniMap);
     map.on('click', function () { closeSheet(); });
@@ -124,7 +128,7 @@
     applyLang(); applyMode(); applyLayers();
     openFromHash();
     registerSW();
-    window.__app = { tileLayers: function () { return tiles; }, trails: function () { return trailData; }, canopy: function () { return canopyLayer; }, canopyInfo: function () { return canopyInfo; }, terrainData: function () { return terrain; }, names: function () { return placeNames; }, reliefInfo: function () { return reliefInfo; }, under: function () { return underRenderer; }, contoursWide: function () { return wideContours; }, waters: function () { return waters; }, chooseBearing: chooseBearing, fitFor: fitFor, tiltAngles: tiltAngles, isTransitioning: function () { return transitioning; }, sites: function () { return pois; }, golf: function () { return golf; }, boundary: boundary, bbounds: bbounds, terrain: terrain, map: map, G: G, state: state, meta: meta };       // for tests / debugging
+    window.__app = { cfg: function () { return cfg; }, tileLayers: function () { return tiles; }, ppm: pxPerMetre, trails: function () { return trailData; }, footpaths: function () { return footpathLayers; }, canopy: function () { return canopyLayer; }, canopyInfo: function () { return canopyInfo; }, terrainData: function () { return terrain; }, names: function () { return placeNames; }, reliefInfo: function () { return reliefInfo; }, under: function () { return underRenderer; }, contoursWide: function () { return wideContours; }, waters: function () { return waters; }, chooseBearing: chooseBearing, fitFor: fitFor, tiltAngles: tiltAngles, isTransitioning: function () { return transitioning; }, sites: function () { return pois; }, golf: function () { return golf; }, boundary: boundary, bbounds: bbounds, terrain: terrain, map: map, G: G, state: state, meta: meta };       // for tests / debugging
   }
 
   function VaultTileLayer() {
@@ -146,7 +150,7 @@
   function buildPampas() {
     Object.keys(pampas).forEach(function (k) {
       var p = pampas[k];
-      var poly = L.polygon(polyLatLngs(p.polygon), { stroke: false, fillColor: '#f2b134', fillOpacity: 0.001, interactive: true }).addTo(groups.pampas);
+      var poly = L.polygon(polyLatLngs(p.polygon), { stroke: false, fillColor: cfg.colours.pampa_highlight, fillOpacity: 0.001, interactive: true }).addTo(groups.pampas);
       poly.on('click', function (e) { L.DomEvent.stopPropagation(e); selectPampa(k); });
       pampaPolys[k] = poly;
       var m = L.marker(G.m2ll(p.label[0], p.label[1]), { icon: L.divIcon({ className: '', html: '<div class="badge-m">' + k + '</div>', iconSize: [26, 26], iconAnchor: [13, 13] }), keyboard: false, zIndexOffset: 600 })      // badges stay above quest markers
@@ -170,13 +174,25 @@
       var kind = p.kind === 'label' ? 'label' : p.layer;
       var pill = L.marker(G.m2ll(p.x, p.y), { icon: pillIcon(p, kind), keyboard: false, interactive: false });
       grp.addLayer(pill);
+      if (p.icon && ICONS[p.icon]) grp.addLayer(spriteOverlay(p));      // sites outside the art: the icon is drawn on the map itself (scales, turns and moves with it like the art's sprites)
       if (p.kind !== 'label') {
-        var hit = L.circleMarker(G.m2ll(p.x, p.y + 6), { radius: 17, stroke: false, fillColor: '#fff', fillOpacity: 0.001, interactive: true });
+        var d = 2 * hitRadius(p), hit = L.marker(G.m2ll(hitOf(p)[0], hitOf(p)[1]), { icon: L.divIcon({ className: 'site-hit', iconSize: [d, d], iconAnchor: [d / 2, d / 2] }), zIndexOffset: 10000 - Math.round(hitOf(p)[2]), keyboard: false });      // an invisible round tap area as big as the sprite it covers (p.hit = centre + radius in metres, measured when the art is drawn); a marker, so it is in front of the letter badges and bubbles; smaller areas above bigger ones
         hit.on('click', function (e) { L.DomEvent.stopPropagation(e); showView({ type: 'site', id: p.id }); });
         grp.addLayer(hit);
       }
-      sitePills.push({ poi: p, pill: pill, grp: grp, kind: kind });
+      sitePills.push({ poi: p, pill: pill, grp: grp, kind: kind, hit: hit });
     });
+  }
+  function hitOf(p) { return p.hit || [p.x, p.y + 6, 0]; }      // sites without a measured sprite (runway, pond) keep a small round area
+  function hitRadius(p) { return Math.max(12, hitOf(p)[2] * pxPerMetre()); }
+  function sizeHits() {      // tap areas follow the zoom (sprite size, never smaller than 12 px)
+    if (!map || !sitePills) return;
+    sitePills.forEach(function (s) { if (s.hit && s.hit._icon) { var hd = 2 * hitRadius(s.poi), hs = s.hit._icon.style; hs.width = hs.height = hd + 'px'; hs.marginLeft = hs.marginTop = -hd / 2 + 'px'; } });
+  }
+  function spriteOverlay(p) {      // an SVG image over cfg.site_icon_m metres, in the 'sprites' pane (in front of the vector layers, behind the markers); Leaflet zooms it with the map, so it never lags behind the background
+    var svg = ICONS[p.icon].replace('{cream}', cfg.colours.cream).replace('{gold}', cfg.colours.pampa_highlight).replace('{heading}', p.heading || 0), h = cfg.site_icon_m / 2;
+    var el = new DOMParser().parseFromString(svg.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" '), 'image/svg+xml').documentElement;
+    return L.svgOverlay(el, [G.m2ll(p.x - h, p.y - h), G.m2ll(p.x + h, p.y + h)], { pane: 'sprites', interactive: false });
   }
   function pillIcon(p, kind) {
     var e = EMOJI[p.id] ? EMOJI[p.id] + ' ' : '';
@@ -235,10 +251,10 @@
   }
   function buildWaters() {
     var ll = pathLL;
-    waters.tarns.forEach(function (t2) { L.polygon(ll(t2.pts), { fillColor: '#8fd3f4', fillOpacity: 1, color: '#ecd596', weight: 2.5, className: 'tarn', interactive: false, renderer: underRenderer }).addTo(groups.waters); });
+    waters.tarns.forEach(function (t2) { L.polygon(ll(t2.pts), { fillColor: cfg.colours.lake, fillOpacity: 1, color: cfg.colours.river_bank, weight: 2.5, className: 'tarn', interactive: false, renderer: underRenderer }).addTo(groups.waters); });
     ['bank', 'core', 'hl'].forEach(function (part) {      // all banks first, then all cores, then the pale centre dashes (as in the art's rivers), so rivers join cleanly where they meet
       waters.rivers.forEach(function (r) {
-        var joined = r.j && (r.j[0] || r.j[1]), grp = r.f ? groups.watersIn : groups.waters, rend = r.f ? undefined : underRenderer, col = part === 'bank' ? '#ecd596' : part === 'core' ? '#3fc1e6' : '#e4f6fc';
+        var joined = r.j && (r.j[0] || r.j[1]), grp = r.f ? groups.watersIn : groups.waters, rend = r.f ? undefined : underRenderer, col = part === 'bank' ? cfg.colours.river_bank : part === 'core' ? cfg.colours.river_core : cfg.colours.river_hl_app;
         var l = L.polyline(ll(r.pts), { color: col, weight: waterWeights(r.cls)[part], opacity: part === 'hl' ? 0.85 : 1, lineCap: part === 'hl' || joined ? 'butt' : 'round', lineJoin: 'round', dashArray: part === 'hl' ? '10 14' : null, className: 'river-' + part + (r.cls === 'major' ? ' river-major' : ''), interactive: false, renderer: rend }).addTo(grp);      // f=0: outside the close-up frame (both views); f=1: inside it (user-drawn rivers the art does not have; both views)
         waterLayers.push({ l: l, cls: r.cls, part: part, r: r });
         if (joined && part !== 'hl') [0, 1].forEach(function (k) {      // flat ends where it joins another river; round caps only on the free ends
@@ -251,7 +267,7 @@
     restyleWaters();
     wideContours.levels.forEach(function (lv) {
       var major = lv.z % wideContours.major === 0;
-      var style = { color: '#8a6a3a', weight: major ? 1.3 : 0.7, opacity: major ? 0.75 : 0.4, interactive: false }, ll = pathLL;
+      var style = { color: cfg.colours.wide_contour, weight: major ? 1.3 : 0.7, opacity: major ? 0.75 : 0.4, interactive: false }, ll = pathLL;
       lv.lines.forEach(function (ln) { L.polyline(ll(ln), L.extend({ renderer: underRenderer, className: 'wide-contour' + (major ? ' wide-major' : '') }, style)).addTo(groups.wideContours); });      // outside the close-up frame: under the art
       (lv.lines_mid || []).forEach(function (ln) { L.polyline(ll(ln), L.extend({ renderer: underRenderer, className: 'wide-contour wide-contour-mid' + (major ? ' wide-major' : '') }, style)).addTo(groups.wideContoursMid); });      // around the close-up frame: only where the pampa view has no fine contours of its own (property view)
       (lv.labels_mid || []).forEach(function (p) { L.marker(G.m2ll(p[0], p[1]), { icon: L.divIcon({ className: 'wide-contour-label', html: '<span>' + lv.z + ' m</span>', iconSize: [0, 0] }), interactive: false, keyboard: false }).addTo(groups.wideLabelsMid); });
@@ -261,10 +277,10 @@
   }
   function buildBoundary() {
     var ll = pathLL(boundary.ring);
-    L.polygon(ll, { fill: false, color: '#fff6d9', weight: 4, opacity: 0.85, interactive: false }).addTo(groups.boundary);                          // cream halo so the line reads on every background
-    L.polygon(ll, { fill: false, color: '#b5402a', weight: 1.5, opacity: 1, dashArray: '8 6', className: 'boundary-line', interactive: false }).addTo(groups.boundary);
+    L.polygon(ll, { fill: false, color: cfg.colours.cream, weight: 4, opacity: 0.85, interactive: false }).addTo(groups.boundary);                          // cream halo so the line reads on every background
+    L.polygon(ll, { fill: false, color: cfg.colours.boundary, weight: 1.5, opacity: 1, dashArray: '8 6', className: 'boundary-line', interactive: false }).addTo(groups.boundary);
     // the edge of the mapped coverage zone: a firm thin line in both views (scrolling past it is not possible, see clampToZone)
-    L.rectangle(zoneBounds, { fill: false, color: '#2f6f9f', weight: 2, opacity: 0.9, className: 'zone-line', interactive: false }).addTo(groups.zone);
+    L.rectangle(zoneBounds, { fill: false, color: cfg.colours.zone_line, weight: 2, opacity: 0.9, className: 'zone-line', interactive: false }).addTo(groups.zone);
   }
   function insideProperty(x, y) {      // ray casting on the outline (map metres)
     var r = boundary.ring, inside = false;
@@ -279,10 +295,10 @@
     });
     var line = function (lines, style, grp) { lines.forEach(function (l) { L.polyline(pathLL(l), style).addTo(grp); }); };
     terrain.major.forEach(function (m) {
-      line(m.lines, { color: '#6b3f1d', weight: 1.6, opacity: 0.55, interactive: false }, groups.contourMajor);
+      line(m.lines, { color: cfg.colours.ink, weight: 1.6, opacity: 0.55, interactive: false }, groups.contourMajor);
       (m.labels || []).forEach(function (p) { L.marker(G.m2ll(p[0], p[1]), { icon: L.divIcon({ className: 'contour-label', html: '<span>' + m.z + ' m</span>', iconSize: [0, 0] }), interactive: false, keyboard: false }).addTo(groups.contourLabels); });
     });
-    terrain.minor.forEach(function (m) { line(m.lines, { color: '#6b3f1d', weight: 0.8, opacity: 0.4, interactive: false }, groups.contourMinor); });
+    terrain.minor.forEach(function (m) { line(m.lines, { color: cfg.colours.ink, weight: 0.8, opacity: 0.4, interactive: false }, groups.contourMinor); });
   }
   var minorWanted = false;
   function curView() { return map.getContainer().classList.contains('wide') ? 'property' : 'pampa'; }
@@ -403,13 +419,27 @@
     }).catch(function () { /* no forest layer (e.g. offline before it was cached): the map still works */ });
   }
 
+  /* ---------- footpaths (short walks recorded with the Garmin): the same sandy path as the art's footpaths to the falls; always shown, in every map mode and both views ---------- */
+  var footpathLayers = [];
+  function footpathWeights() { var ppm = pxPerMetre(); return { edge: Math.max(2.6, cfg.footpath_m.edge * ppm), fill: Math.max(1.5, cfg.footpath_m.fill * ppm) }; }
+  function buildFootpaths() {
+    (trailData.footpaths || []).forEach(function (fp) {
+      fp.lines.forEach(function (ln) {
+        var ll = pathLL(ln), w = footpathWeights(), o = { lineCap: 'round', lineJoin: 'round', interactive: false };
+        footpathLayers.push({ part: 'edge', l: L.polyline(ll, Object.assign({ color: cfg.colours.footpath_edge, weight: w.edge, className: 'footpath-edge' }, o)).addTo(groups.footpaths) });
+        footpathLayers.push({ part: 'fill', l: L.polyline(ll, Object.assign({ color: cfg.colours.footpath_fill, weight: w.fill, className: 'footpath-fill' }, o)).addTo(groups.footpaths) });
+      });
+    });
+  }
+  function restyleFootpaths() { if (!map) return; var w = footpathWeights(); footpathLayers.forEach(function (o) { o.l.setStyle({ weight: w[o.part] }); }); }
+
   /* ---------- hiking trails (Gaia GPS route): dark brown casing + cream dashes; two name labels; tap opens the details in the property view ---------- */
   function buildTrails() {      // the Gaia route: a thin dark casing + cream dashes (no tap action); two name labels in the rivers' style
     trailData.trails.forEach(function (tr) {
       tr.lines.forEach(function (ln) {
         var ll = pathLL(ln);
-        L.polyline(ll, { color: '#3b2a14', weight: 2.8, opacity: 1, lineCap: 'round', lineJoin: 'round', className: 'trail-casing', interactive: false }).addTo(groups.trails);
-        L.polyline(ll, { color: '#fff6d9', weight: 1.2, opacity: 1, lineCap: 'butt', lineJoin: 'round', dashArray: '5 4', className: 'trail-dash', interactive: false }).addTo(groups.trails);
+        L.polyline(ll, { color: cfg.colours.trail_casing, weight: 2.8, opacity: 1, lineCap: 'round', lineJoin: 'round', className: 'trail-casing', interactive: false }).addTo(groups.trails);
+        L.polyline(ll, { color: cfg.colours.cream, weight: 1.2, opacity: 1, lineCap: 'butt', lineJoin: 'round', dashArray: '5 4', className: 'trail-dash', interactive: false }).addTo(groups.trails);
       });
       tr.labels.forEach(function (p) {
         L.marker(G.m2ll(p[0], p[1]), { icon: L.divIcon({ className: 'trail-label', html: '<span><i class="en">' + esc(tr.name.en) + '</i><i class="es">' + esc(tr.name.es) + '</i></span>', iconSize: [0, 0] }), interactive: false, keyboard: false }).addTo(groups.trails);      // both languages in the markup: CSS shows the current one
@@ -436,16 +466,15 @@
   }
 
   /* ---------- property view: fit the strip to the screen, tilting the map when that helps ---------- */
-  var PAD = { l: 12, r: 76, t: 100, b: 24 };      // px kept clear for the title (top) and the button column (right)
   function normDeg(a) { return ((a + 180) % 360 + 360) % 360 - 180; }
   function fitFor(th, vw, vh) {      // scale/centre/zoom that fit the whole property on a vw x vh screen when the map is turned clockwise by th degrees
     var r = th * Math.PI / 180, c = Math.cos(r), s = Math.sin(r), mnx = 1e9, mxx = -1e9, mny = 1e9, mxy = -1e9;
     boundary.ring.forEach(function (p) { var sx = p[0] * c + p[1] * s, sy = -p[0] * s + p[1] * c; mnx = Math.min(mnx, sx); mxx = Math.max(mxx, sx); mny = Math.min(mny, sy); mxy = Math.max(mxy, sy); });
-    var aw = vw - PAD.l - PAD.r, ah = vh - PAD.t - PAD.b, sc = Math.min(aw / (mxx - mnx), ah / (mxy - mny));
+    var PAD = cfg.fit_pad, aw = vw - PAD.l - PAD.r, ah = vh - PAD.t - PAD.b, sc = Math.min(aw / (mxx - mnx), ah / (mxy - mny));
     var dx = (PAD.l + aw / 2) - vw / 2, dy = (PAD.t + ah / 2) - vh / 2;      // where the content sits relative to the screen centre (px, y down)
     var csx = (mnx + mxx) / 2 - dx / sc, csy = (mny + mxy) / 2 + dy / sc;      // screen-centre in the turned frame, then back to map metres
     var z = meta.zmax + Math.log(sc / meta.px_per_m) / Math.LN2;
-    return { scale: sc, cx: csx * c - csy * s, cy: csx * s + csy * c, z: Math.floor(z * 4) / 4 };
+    return { scale: sc, cx: csx * c - csy * s, cy: csx * s + csy * c, z: Math.floor(z / cfg.zoom_snap) * cfg.zoom_snap };
   }
   function tiltAngles() {      // the two useful tilts: strip upright (tall screens) or strip flat (wide screens)
     var a = boundary.axis_deg, up = a <= 90 ? -a : 180 - a;
@@ -455,7 +484,7 @@
     if (mode === 'north') return 0;
     var t2 = tiltAngles(), s0 = fitFor(0, vw, vh).scale, sU = fitFor(t2.up, vw, vh).scale, sF = fitFor(t2.flat, vw, vh).scale;
     var best = sU >= sF ? t2.up : t2.flat, gain = Math.max(sU, sF) / s0;
-    return mode === 'tilted' || gain >= 1.15 ? best : 0;      // auto: tilt only when it makes the property at least 15% bigger
+    return mode === 'tilted' || gain >= cfg.tilt.auto_gain ? best : 0;      // auto: tilt only when it makes the property bigger by cfg.tilt.auto_gain (15%)
   }
   function tweenBearing(target, ms, done) {
     var from = normDeg(map.getBearing()), d = normDeg(normDeg(target) - from), t0 = null;
@@ -550,6 +579,7 @@
     $('lang').textContent = t('lang');
     $('title').textContent = t('title');
     sitePills.forEach(function (s) { s.pill.setIcon(pillIcon(s.poi, s.kind)); });
+    sizeHits();
     updateOfflineText();
     paintTilt(); $('compass').title = t('compass'); $('view-close').textContent = t('view_close'); $('view-property').textContent = t('view_property'); updateScale(); updateView();
     renderView();
@@ -578,7 +608,7 @@
   /* ---------- selection + bottom sheet ---------- */
   function setHash(h) { try { history.replaceState(null, '', h ? '#' + h : location.pathname + location.search); } catch (e) { /* file:// */ } }
   function highlight(kind, id) {
-    Object.keys(pampaPolys).forEach(function (k) { var on = kind === 'pampa' && id === k; pampaPolys[k].setStyle(on ? { stroke: true, color: '#f2b134', weight: 4, fillColor: '#f2b134', fillOpacity: 0.25 } : { stroke: false, fillOpacity: 0.001 }); badgeMarkers[k].getElement() && badgeMarkers[k].getElement().firstChild.classList.toggle('sel', on); });
+    Object.keys(pampaPolys).forEach(function (k) { var on = kind === 'pampa' && id === k; pampaPolys[k].setStyle(on ? { stroke: true, color: cfg.colours.pampa_highlight, weight: 4, fillColor: cfg.colours.pampa_highlight, fillOpacity: 0.25 } : { stroke: false, fillOpacity: 0.001 }); badgeMarkers[k].getElement() && badgeMarkers[k].getElement().firstChild.classList.toggle('sel', on); });
     Object.keys(questPolys).forEach(function (k) { var on = kind === 'quest' && id === k; questPolys[k].setStyle({ weight: on ? 6 : 3, fillOpacity: on ? 0.38 : 0.22 }); });      // dashed outline on every action item, heavier on the selected one
   }
   function selectPampa(k) { showView({ type: 'pampa', id: k }); }
@@ -647,7 +677,7 @@
   function terrainBlock() { var l = [].slice.call(arguments).map(function (s) { return '<p>' + esc(s) + '</p>'; }).join(''); return '<h3>' + t('elevation') + '</h3>' + l + '<p class="muted">' + t('terrain_note') + '</p>'; }
   function viewSite(id) {
     var p = findPoi(id);
-    return '<h2>' + (EMOJI[id] || '📍') + ' ' + esc(nm(p.name)) + '</h2>' + chips([[p.layer === 'prospective' ? t('planned') : t('on_ground'), p.layer === 'prospective' ? 'planned' : ''], ['⛰ ' + p.elev + ' ' + t('m')]]) + terrainBlock(elevText(p.elev)) + notesBlock(p.notes);
+    return '<h2>' + (EMOJI[id] === '' ? '' : (EMOJI[id] || '📍') + ' ') + esc(nm(p.name)) + '</h2>' + chips([[p.layer === 'prospective' ? t('planned') : t('on_ground'), p.layer === 'prospective' ? 'planned' : '']].concat(p.elev == null ? [] : [['⛰ ' + p.elev + ' ' + t('m')]])) + (p.elev == null ? '' : terrainBlock(elevText(p.elev))) + notesBlock(p.notes);
   }
   function viewQuest(id) {
     var q = quests.filter(function (x) { return x.id === id; })[0];

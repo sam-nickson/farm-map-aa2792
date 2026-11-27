@@ -69,6 +69,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .badge-m.sel { background: var(--gold); border-color: var(--wood-dk); transform: scale(1.25); }
 .pill { position: relative; }
 .pill span { position: absolute; left: 0; top: 4px; transform: translateX(-50%); white-space: nowrap; background: var(--cream); border: 1.5px solid var(--wood-ln); color: var(--ink); font-weight: 800; font-size: 11px; padding: 2px 8px; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.3); pointer-events: none; }
+.site-hit { border-radius: 50%; cursor: pointer; background: transparent; }      /* invisible tap area of a site icon */
 .pill.prospective span { background: #e8f4ff; border: 1.5px dashed var(--blue); }
 .pill.label span { background: none; border: 0; box-shadow: none; color: #17789c; font-style: italic; text-shadow: 0 0 3px #fff6d9, 0 0 3px #fff6d9, 0 0 3px #fff6d9; }
 .far .pill, .nolabels .pill { display: none; }
